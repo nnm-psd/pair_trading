@@ -113,6 +113,10 @@ td.heat { color: var(--ink); }
 footer { border-top: 1px solid var(--rule); margin-top: 56px; padding: 22px 0 40px; color: var(--muted); font-size: 0.875rem; }
 footer p { max-width: 80ch; }
 
+#grid-chart { padding: 12px 16px 4px; min-height: 0; }
+#grid-chart .tick { font: 12px var(--sans); fill: var(--muted); }
+#grid-chart .lab { font: 13px var(--sans); fill: var(--ink-2); }
+
 /* uPlot chrome in our tokens */
 .uplot { font-family: var(--sans); }
 .u-legend { font-size: 0.8125rem; color: var(--ink-2); text-align: left; padding-left: 8px; }

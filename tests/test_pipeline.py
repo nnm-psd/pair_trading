@@ -77,8 +77,38 @@ def test_clean_fixes_bad_prints_but_keeps_real_crashes():
 def test_stats_on_known_returns():
     rng = np.random.default_rng(0)
     r = pd.Series(rng.normal(0.0004, 0.01, 5000), index=pd.bdate_range("2000-01-03", periods=5000))
-    s = stats.summary(r, r * 0 + rng.normal(0, 0.01, 5000))
+    s = stats.summary(r, r * 0 + rng.normal(0, 0.01, 5000), r * 0)
     assert abs(s["sharpe"] - 0.0004 / 0.01 * np.sqrt(252)) < 0.25
     assert s["psr"] > 0.95 and -1 < s["max_dd"] < 0
     assert stats.dsr(r, [0.04, 0.0, 0.01, -0.01]) < stats.psr(r)
     assert stats.net(pd.DataFrame({"pnl": [0.01], "traded": [2.0], "short": [0.0]}), 10).iloc[0] == 0.01 - 0.002
+
+
+def test_pbo_separates_luck_from_skill():
+    rng = np.random.default_rng(4)
+    noise = pd.DataFrame(rng.normal(0, 0.01, (2000, 20)))
+    assert 0.25 < stats.pbo(noise) < 0.75  # pure noise: the in-sample winner is a coin flip out of sample
+    skill = noise.copy()
+    skill[0] += 0.003  # one variant with a real edge
+    assert stats.pbo(skill) < 0.05
+
+
+def test_bootstrap_intervals_and_difference_test():
+    rng = np.random.default_rng(5)
+    idx = pd.bdate_range("2000-01-03", periods=3000)
+    R = pd.DataFrame({"good": rng.normal(0.001, 0.01, 3000), "flat": rng.normal(0, 0.01, 3000)}, index=idx)
+    b = stats.bootstrap(R, reps=500)
+    lo, hi = b["sharpe_ci"]["good"]
+    assert lo < stats.sharpe(R.good) < hi and lo > 0
+    assert b["diffs"][0]["p"] < 0.05
+    same = stats.bootstrap(R.assign(twin=R.flat + rng.normal(0, 0.001, 3000))[["flat", "twin"]], reps=500)
+    assert same["diffs"][0]["p"] > 0.05
+
+
+def test_factor_regression_recovers_loading():
+    rng = np.random.default_rng(6)
+    idx = pd.bdate_range("2000-01-03", periods=3000)
+    F = pd.DataFrame({"REV": rng.normal(0, 0.01, 3000), "MKT": rng.normal(0, 0.01, 3000)}, index=idx)
+    r = 0.5 * F.REV + rng.normal(0, 0.002, 3000)
+    f = stats.factor_regression(r, F)
+    assert abs(f["betas"]["REV"] - 0.5) < 0.05 and abs(f["alpha_t"]) < 3

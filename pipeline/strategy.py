@@ -1,22 +1,28 @@
 """Pair selection (distance, Engle-Granger cointegration) and trading (static or Kalman hedge), one shared simulator.
 
 Protocol, fixed before any result was seen:
-- Every month a new cohort forms pairs on the past FORM trading days and trades them for the next TRADE days.
-- Pairs are only formed inside a sector. Each method keeps its best N_PAIRS.
+- Every month a new cohort forms pairs on the past `form` trading days and trades them for the next TRADE days.
+- Pairs are only formed inside a sector. Each method keeps its best `n` pairs.
 - A signal seen at the close of day t is executed at the close of day t+1.
 - Open when |z| > entry, close when z crosses EXIT, force-close at the end of the trading period.
-- Each pair gets 1 unit of capital: 2 units gross (long + short). Cohort return = pair P&L / N_PAIRS (committed capital).
+- Each pair gets 1 unit of capital: 2 units gross (long + short). Cohort return = pair P&L / n (committed capital).
+
+The headline is BASE. The full grid FORMS x NS x ENTRIES per method was fixed with it and is only used to measure
+overfitting (deflated Sharpe ratio, probability of backtest overfitting), never to pick the headline.
 """
 import itertools
+import os
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
 from statsmodels.tsa.adfvalues import mackinnonp
 
-FORM, TRADE, N_PAIRS = 252, 126, 20
-ENTRIES = (1.5, 2.0, 2.5)  # 2.0 is the headline; the others are a robustness check
-BASE_ENTRY = 2.0
+TRADE = 126
+FORMS, NS, ENTRIES = (126, 252, 378), (10, 20, 40), (1.5, 2.0, 2.5)
+BASE = (252, 20, 2.0)  # (formation days, pairs, entry z)
+FIELDS = ("pnl", "traded", "short")
 EXIT = 0.0
 P_MAX = 0.05  # Engle-Granger p-value cut-off
 KALMAN_DELTA = 1e-5  # state noise of the Kalman hedge ratio, on log prices rebased to 0 at formation start
@@ -27,7 +33,7 @@ def candidate_pairs(sectors: pd.Series) -> list[tuple[str, str]]:
     return [p for _, g in sectors.groupby(sectors) for p in itertools.combinations(sorted(g.index), 2)]
 
 
-def select_distance(lp: pd.DataFrame, pairs: list) -> list[dict]:
+def select_distance(lp: pd.DataFrame, pairs: list, n: int) -> list[dict]:
     """Gatev, Goetzmann & Rouwenhorst (2006): smallest sum of squared differences of normalised prices."""
     norm = np.exp(lp - lp.iloc[0]).to_numpy()
     col = {c: i for i, c in enumerate(lp.columns)}
@@ -35,7 +41,7 @@ def select_distance(lp: pd.DataFrame, pairs: list) -> list[dict]:
     d = norm[:, ia] - norm[:, ib]
     ssd = (d**2).sum(0)
     sd = d.std(0, ddof=1)
-    return [{"a": pairs[i][0], "b": pairs[i][1], "sd": sd[i], "score": ssd[i]} for i in np.argsort(ssd)[:N_PAIRS]]
+    return [{"a": pairs[i][0], "b": pairs[i][1], "sd": sd[i], "score": ssd[i]} for i in np.argsort(ssd)[:n]]
 
 
 def engle_granger(lp: pd.DataFrame, pairs: list) -> dict[str, np.ndarray]:
@@ -66,12 +72,12 @@ def engle_granger(lp: pd.DataFrame, pairs: list) -> dict[str, np.ndarray]:
     return {"beta": beta, "alpha": alpha, "sd": e.std(0, ddof=1), "t": t, "p": p, "half_life": half_life}
 
 
-def select_cointegration(lp: pd.DataFrame, pairs: list) -> list[dict]:
+def select_cointegration(lp: pd.DataFrame, pairs: list, n: int) -> list[dict]:
     """Vidyamurthy (2004): significant Engle-Granger pairs with a usable half-life, most significant first."""
     eg = engle_granger(lp, pairs)
     ok = (eg["p"] < P_MAX) & (eg["beta"] > 0) & (eg["half_life"] >= 1) & (eg["half_life"] <= TRADE)
     idx = np.flatnonzero(ok)
-    idx = idx[np.argsort(eg["t"][idx])][:N_PAIRS]
+    idx = idx[np.argsort(eg["t"][idx])][:n]
     return [{"a": pairs[i][0], "b": pairs[i][1], **{k: float(v[i]) for k, v in eg.items()}, "score": float(eg["p"][i])}
             for i in idx]
 
@@ -155,44 +161,48 @@ def simulate(pa: np.ndarray, pb: np.ndarray, z: np.ndarray, beta: np.ndarray, en
 
 
 def cohort_starts(index: pd.DatetimeIndex) -> list[int]:
-    """Positions of the first trading day of each month that has a full formation window behind it."""
+    """First trading day of each month with the longest formation window behind it, so every variant shares dates."""
     month = index.to_period("M")
     starts = np.flatnonzero(np.r_[True, month[1:] != month[:-1]])
-    return [int(s) for s in starts if s >= FORM]
+    return [int(s) for s in starts if s >= max(FORMS)]
 
 
-def run(px: pd.DataFrame, sectors: pd.Series):
-    """Run every cohort for every method and entry threshold. Returns daily portfolio series and trade records."""
-    lp = np.log(px)
-    n = len(px)
-    pairs_all = candidate_pairs(sectors[sectors.index.isin(px.columns)])
-    keys = [(m, e) for m in METHODS for e in ENTRIES]
-    acc = {k: {f: np.zeros(n) for f in ("pnl", "traded", "short")} for k in keys}
-    active = np.zeros(n)
-    trades, live, n_selected = [], [], {m: [] for m in METHODS}
+def variants() -> list[tuple]:
+    return [(m, f, n, e) for m in METHODS for f in FORMS for n in NS for e in ENTRIES]
 
-    for s in cohort_starts(px.index):
-        end = min(s + TRADE, n)
-        final = s + TRADE <= n
-        form = lp.iloc[s - FORM:s]
+
+_PX = _PAIRS = None
+
+
+def _init(px: pd.DataFrame, pairs: list) -> None:
+    global _PX, _PAIRS
+    _PX, _PAIRS = px, pairs
+
+
+def _cohort(s: int):
+    """One monthly cohort, every variant. Pair P&L does not depend on how many pairs are held, so the best
+    max(NS) pairs are simulated once and smaller portfolios are prefixes of that ranking."""
+    px, lp = _PX, np.log(_PX)
+    end, final = min(s + TRADE, len(px)), s + TRADE <= len(px)
+    trade_px, dates = px.iloc[s:end].ffill(), px.index[s:end]
+    out, trades, live, n_selected = {}, [], [], {}
+    for f in FORMS:
+        form = lp.iloc[s - f:s]
         ok = form.columns[form.notna().all() & lp.iloc[s].notna()]
-        pairs = [p for p in pairs_all if p[0] in ok and p[1] in ok]
-        trade_px = px.iloc[s:end].ffill()
-        coint = select_cointegration(form[ok], pairs)
-        chosen = {"distance": select_distance(form[ok], pairs), "cointegration": coint, "kalman": coint}
-        active[s:end] += 1
+        pairs = [p for p in _PAIRS if p[0] in ok and p[1] in ok]
+        coint = select_cointegration(form[ok], pairs, max(NS))
+        chosen = {"distance": select_distance(form[ok], pairs, max(NS)), "cointegration": coint, "kalman": coint}
         for m in METHODS:
-            n_selected[m].append(len(chosen[m]))
-            for pair in chosen[m]:
-                z, beta = signals(m, pair, form, trade_px)
-                pa, pb = trade_px[pair["a"]].to_numpy(), trade_px[pair["b"]].to_numpy()
-                for e in ENTRIES:
+            n_selected[(m, f)] = len(chosen[m])
+            legs = [(trade_px[p["a"]].to_numpy(), trade_px[p["b"]].to_numpy()) for p in chosen[m]]
+            sig = [signals(m, p, form, trade_px) for p in chosen[m]]
+            for e in ENTRIES:
+                acc = np.zeros((len(FIELDS), max(NS) + 1, end - s))
+                for i, (pair, (pa, pb), (z, beta)) in enumerate(zip(chosen[m], legs, sig)):
                     r = simulate(pa, pb, z, beta, e, final)
-                    for f in ("pnl", "traded", "short"):
-                        acc[(m, e)][f][s:end] += getattr(r, f) / N_PAIRS
-                    if e != BASE_ENTRY:
+                    acc[:, i + 1] = r.pnl, r.traded, r.short
+                    if (f, e) != (BASE[0], BASE[2]) or i >= BASE[1]:
                         continue
-                    dates = px.index[s:end]
                     trades += [{"method": m, "a": pair["a"], "b": pair["b"], "cohort": dates[0],
                                 "open": dates[t["open"]], "close": dates[t["close"]], "days": t["close"] - t["open"],
                                 "side": t["side"], "pnl": t["pnl"], "converged": t["converged"]} for t in r.trades]
@@ -201,8 +211,29 @@ def run(px: pd.DataFrame, sectors: pd.Series):
                         live.append({"method": m, "a": pair["a"], "b": pair["b"], "cohort": dates[0],
                                      "opened": dates[o["opened"]], "side": o["side"], "pnl": o["pnl"],
                                      "beta": o["beta"], "z": pd.Series(z, index=dates)})
+                cum = acc.cumsum(axis=1)
+                for n in NS:
+                    out[(m, f, n, e)] = cum[:, n] / n
+    return s, end, out, trades, live, n_selected
 
-    out = {}
-    for k, v in acc.items():
-        out[k] = pd.DataFrame({f: v[f] / np.maximum(active, 1) for f in v}, index=px.index)[active > 0]
-    return out, pd.DataFrame(trades), live, {m: float(np.mean(v)) for m, v in n_selected.items()}
+
+def run(px: pd.DataFrame, sectors: pd.Series):
+    """Run every cohort for every variant, in parallel. Returns {variant: daily DataFrame of FIELDS}, the trades
+    and still-open positions of the BASE variant, and the mean number of pairs found per cohort."""
+    pairs_all = candidate_pairs(sectors[sectors.index.isin(px.columns)])
+    n = len(px)
+    acc = {k: np.zeros((len(FIELDS), n)) for k in variants()}
+    active = np.zeros(n)
+    trades, live, n_selected = [], [], {}
+    with ProcessPoolExecutor(os.cpu_count(), initializer=_init, initargs=(px, pairs_all)) as ex:
+        for s, end, out, tr, lv, ns in ex.map(_cohort, cohort_starts(px.index), chunksize=4):
+            active[s:end] += 1
+            for k, v in out.items():
+                acc[k][:, s:end] += v
+            trades += tr
+            live += lv
+            for k, v in ns.items():
+                n_selected.setdefault(k, []).append(v)
+    keep = active > 0
+    frames = {k: pd.DataFrame(dict(zip(FIELDS, v / np.maximum(active, 1))), index=px.index)[keep] for k, v in acc.items()}
+    return frames, pd.DataFrame(trades), live, {m: float(np.mean(n_selected[(m, BASE[0])])) for m in METHODS}

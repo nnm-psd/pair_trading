@@ -65,10 +65,17 @@
 
   <h2>Statistics</h2>
   <ul>
-    <li><b>Return a year</b> is compound annual growth. <b>Sharpe ratio</b> is the mean daily return over its standard deviation, times √252. No risk-free rate is subtracted, because a long-short book is self-financing; in practice the cash collateral would also earn interest.</li>
+    <li><b>Cash.</b> The capital set aside for the pairs earns the euro overnight rate: EONIA until September 2019, €STR after (ECB data). <b>Return a year</b> is compound growth including that interest; <b>return above cash</b>, the <b>Sharpe ratio</b> (mean over standard deviation, times √252), t-statistics and alphas all use the return in excess of cash. The market is treated the same way.</li>
     <li><b>t-statistic</b> uses Newey–West standard errors (10 lags), because overlapping cohorts make daily returns autocorrelated.</li>
-    <li><b>Deflated Sharpe ratio</b> (Bailey and López de Prado, 2014) is the probability that the true Sharpe ratio beats the best one you would expect by luck from the <b data-k="params.trials">…</b> variants run (three methods × three entry levels), allowing for skew and fat tails. Above 95% is the usual bar.</li>
-    <li><b>Beta</b> and <b>correlation</b> are measured against the equal-weighted universe with dividends. A working pair strategy should be close to zero on both.</li>
+    <li><b>Confidence intervals and tests between methods</b> come from a circular block bootstrap: history is cut into <span data-k="params.block">…</span>-day blocks that are redrawn with replacement 2,000 times, all series together so their correlation is kept. The p-value of a Sharpe difference is the share of redraws, centred on zero, at least as extreme as the observed difference.</li>
+    <li><b>Factor attribution.</b> Excess returns are regressed on seven factors with Newey–West errors: the market (this universe in euros, above cash); Ken French's European size, value, profitability, investment and momentum factors (built in dollars, but as long-short portfolios they are close to currency-neutral); and a <em>within-sector short-term reversal</em> factor built here. Each month it buys the stocks that did worst against their sector over the past month and sells the ones that did best. Pair trading is known to earn much of its return from this effect (Do and Faff, 2010), so this is the test that matters: alpha left after it is what pairs add.</li>
+    <li><b>Two halves.</b> The sample is cut exactly in half, a rule fixed in advance, and a regression on a second-half dummy tests whether the average return changed.</li>
+    <li><b>The parameter grid.</b> With the headline settings, a grid was fixed for each method before any result was seen: formation of <span data-k="params.forms">…</span> days × <span data-k="params.ns">…</span> pairs × entry at <span data-k="params.entries">…</span>, <b data-k="params.trials">…</b> variants in all. The grid is never used to choose the headline. It feeds two measures of overfitting:
+      <ul>
+        <li>The <b>deflated Sharpe ratio</b> (Bailey and López de Prado, 2014): the probability that the true Sharpe ratio beats the best you would expect by luck from that many tries, allowing for skew and fat tails. Above 95% is the usual bar.</li>
+        <li>The <b>probability of backtest overfitting</b> (Bailey, Borwein, López de Prado and Zhu, 2017). History is cut into 16 blocks; for each of the 12,870 ways to pick half of them, the variant with the best Sharpe ratio on that half is ranked on the other half. PBO is how often the winner lands in the bottom half. Near 0 means the ranking is stable; near 50% means it is noise.</li>
+      </ul></li>
+    <li><b>Beta</b> and <b>correlation</b> are measured against the market as above. A working pair strategy should be close to zero on both.</li>
   </ul>
 
   <h2>Limitations</h2>
@@ -77,7 +84,7 @@
     <li><b>Free data.</b> Yahoo's adjusted prices contain errors. The rules above catch the large ones; small ones remain.</li>
     <li><b>Flat costs.</b> Real costs rise in a crisis, when spreads widen and borrowing gets scarce or recalled. Stocks can become impossible to short (bans on financials in 2008 and 2011).</li>
     <li><b>Closing prices only.</b> No intraday data, no auctions modelled, no capacity limit.</li>
-    <li><b>One parameter set.</b> The rules follow the literature and were fixed in advance; the entry level is varied as a robustness check only. A desk would add stop-losses, sector limits and volatility sizing.</li>
+    <li><b>One headline setting.</b> The rules follow the literature and were fixed in advance; the grid measures how fragile they are but is not searched for a better one. A desk would add stop-losses, sector limits and volatility sizing.</li>
     <li><b>Simple returns within a cohort.</b> Profits are not reinvested inside a six-month trading period, only between periods.</li>
   </ul>
 
@@ -90,13 +97,16 @@
   <ol class="refs">
     <li>Bailey, D. H. and López de Prado, M. (2012). The Sharpe ratio efficient frontier. <i>Journal of Risk</i>, 15(2).</li>
     <li>Bailey, D. H. and López de Prado, M. (2014). The deflated Sharpe ratio: correcting for selection bias, backtest overfitting and non-normality. <i>Journal of Portfolio Management</i>, 40(5).</li>
+    <li>Bailey, D. H., Borwein, J., López de Prado, M. and Zhu, Q. J. (2017). The probability of backtest overfitting. <i>Journal of Computational Finance</i>, 20(4).</li>
     <li>Chan, E. (2013). <i>Algorithmic Trading: Winning Strategies and Their Rationale</i>. Wiley.</li>
     <li>Do, B. and Faff, R. (2010). Does simple pairs trading still work? <i>Financial Analysts Journal</i>, 66(4).</li>
     <li>Engle, R. F. and Granger, C. W. J. (1987). Co-integration and error correction: representation, estimation, and testing. <i>Econometrica</i>, 55(2).</li>
+    <li>Fama, E. F. and French, K. R. (2015). A five-factor asset pricing model. <i>Journal of Financial Economics</i>, 116(1). Factor data: Kenneth R. French Data Library.</li>
     <li>Gatev, E., Goetzmann, W. N. and Rouwenhorst, K. G. (2006). Pairs trading: performance of a relative-value arbitrage rule. <i>Review of Financial Studies</i>, 19(3).</li>
     <li>Krauss, C. (2017). Statistical arbitrage pairs trading strategies: review and outlook. <i>Journal of Economic Surveys</i>, 31(2).</li>
     <li>MacKinnon, J. G. (2010). Critical values for cointegration tests. Queen's Economics Department Working Paper 1227.</li>
     <li>Newey, W. K. and West, K. D. (1987). A simple, positive semi-definite, heteroskedasticity and autocorrelation consistent covariance matrix. <i>Econometrica</i>, 55(3).</li>
+    <li>Politis, D. N. and Romano, J. P. (1992). A circular block-resampling procedure for stationary data. In <i>Exploring the Limits of Bootstrap</i>, Wiley.</li>
     <li>Rad, H., Low, R. K. Y. and Faff, R. (2016). The profitability of pairs trading strategies: distance, cointegration and copula methods. <i>Quantitative Finance</i>, 16(10).</li>
     <li>Vidyamurthy, G. (2004). <i>Pairs Trading: Quantitative Methods and Analysis</i>. Wiley.</li>
   </ol>
