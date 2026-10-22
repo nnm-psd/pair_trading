@@ -1,0 +1,54 @@
+# Rebuild after each European trading day: download prices, test, rerun the study, deploy to GitHub Pages.
+# Also runs on every push to main and by hand from the Actions tab.
+# If Yahoo or the tests fail, nothing is deployed and the previous site stays up; GitHub emails the failure.
+name: Update and deploy
+
+on:
+  schedule:
+    - cron: "30 18 * * 1-5" # 18:30 UTC, after the 17:30 CET close has reached Yahoo
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Test
+        run: |
+          uv sync --locked
+          uv run pytest -q
+
+      - name: Run the study
+        run: uv run python -m pipeline
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v5

@@ -1,0 +1,131 @@
+ticker,name,sector
+BNP.PA,BNP Paribas,Banks
+GLE.PA,Societe Generale,Banks
+ACA.PA,Credit Agricole,Banks
+SAN.MC,Banco Santander,Banks
+BBVA.MC,BBVA,Banks
+CABK.MC,CaixaBank,Banks
+SAB.MC,Banco Sabadell,Banks
+BKT.MC,Bankinter,Banks
+ISP.MI,Intesa Sanpaolo,Banks
+UCG.MI,UniCredit,Banks
+BAMI.MI,Banco BPM,Banks
+DBK.DE,Deutsche Bank,Banks
+CBK.DE,Commerzbank,Banks
+INGA.AS,ING Groep,Banks
+KBC.BR,KBC Group,Banks
+BIRG.IR,Bank of Ireland,Banks
+ALV.DE,Allianz,Insurance
+MUV2.DE,Munich Re,Insurance
+HNR1.DE,Hannover Re,Insurance
+CS.PA,AXA,Insurance
+G.MI,Generali,Insurance
+AGN.AS,Aegon,Insurance
+AGS.BR,Ageas,Insurance
+SAMPO.HE,Sampo,Insurance
+SCR.PA,SCOR,Insurance
+VOW3.DE,Volkswagen,Autos
+BMW.DE,BMW,Autos
+MBG.DE,Mercedes-Benz,Autos
+RNO.PA,Renault,Autos
+CON.DE,Continental,Autos
+ML.PA,Michelin,Autos
+PAH3.DE,Porsche SE,Autos
+STLAM.MI,Stellantis,Autos
+TTE.PA,TotalEnergies,Energy
+ENI.MI,Eni,Energy
+REP.MC,Repsol,Energy
+GALP.LS,Galp Energia,Energy
+NESTE.HE,Neste,Energy
+OMV.VI,OMV,Energy
+ENEL.MI,Enel,Utilities
+IBE.MC,Iberdrola,Utilities
+ENGI.PA,Engie,Utilities
+EOAN.DE,E.ON,Utilities
+RWE.DE,RWE,Utilities
+NTGY.MC,Naturgy,Utilities
+ELE.MC,Endesa,Utilities
+SRG.MI,Snam,Utilities
+TRN.MI,Terna,Utilities
+EDP.LS,EDP,Utilities
+FORTUM.HE,Fortum,Utilities
+RED.MC,Redeia,Utilities
+VIE.PA,Veolia,Utilities
+DTE.DE,Deutsche Telekom,Telecoms
+ORA.PA,Orange,Telecoms
+TEF.MC,Telefonica,Telecoms
+KPN.AS,KPN,Telecoms
+TIT.MI,Telecom Italia,Telecoms
+ELISA.HE,Elisa,Telecoms
+PROX.BR,Proximus,Telecoms
+MC.PA,LVMH,Consumer
+KER.PA,Kering,Consumer
+RMS.PA,Hermes,Consumer
+OR.PA,L'Oreal,Consumer
+BN.PA,Danone,Consumer
+RI.PA,Pernod Ricard,Consumer
+ABI.BR,AB InBev,Consumer
+HEIA.AS,Heineken,Consumer
+AD.AS,Ahold Delhaize,Consumer
+CA.PA,Carrefour,Consumer
+ADS.DE,Adidas,Consumer
+PUM.DE,Puma,Consumer
+BEI.DE,Beiersdorf,Consumer
+HEN3.DE,Henkel,Consumer
+ITX.MC,Inditex,Consumer
+SIE.DE,Siemens,Industrials
+AIR.PA,Airbus,Industrials
+SAF.PA,Safran,Industrials
+HO.PA,Thales,Industrials
+AM.PA,Dassault Aviation,Industrials
+MTX.DE,MTU Aero Engines,Industrials
+RHM.DE,Rheinmetall,Industrials
+SU.PA,Schneider Electric,Industrials
+LR.PA,Legrand,Industrials
+DG.PA,Vinci,Industrials
+SGO.PA,Saint-Gobain,Industrials
+EN.PA,Bouygues,Industrials
+ACS.MC,ACS,Industrials
+KNEBV.HE,Kone,Industrials
+WRT1V.HE,Wartsila,Industrials
+DHL.DE,DHL Group,Industrials
+ALO.PA,Alstom,Industrials
+LDO.MI,Leonardo,Industrials
+PRY.MI,Prysmian,Industrials
+BAS.DE,BASF,Materials
+AI.PA,Air Liquide,Materials
+AKZA.AS,Akzo Nobel,Materials
+SY1.DE,Symrise,Materials
+HEI.DE,Heidelberg Materials,Materials
+MT.AS,ArcelorMittal,Materials
+UMI.BR,Umicore,Materials
+SOLB.BR,Solvay,Materials
+UPM.HE,UPM-Kymmene,Materials
+STERV.HE,Stora Enso,Materials
+SAN.PA,Sanofi,Health care
+BAYN.DE,Bayer,Health care
+MRK.DE,Merck KGaA,Health care
+FRE.DE,Fresenius,Health care
+FME.DE,Fresenius Medical Care,Health care
+PHIA.AS,Philips,Health care
+EL.PA,EssilorLuxottica,Health care
+UCB.BR,UCB,Health care
+GRF.MC,Grifols,Health care
+SRT3.DE,Sartorius,Health care
+ORNBV.HE,Orion,Health care
+SAP.DE,SAP,Technology
+ASML.AS,ASML,Technology
+IFX.DE,Infineon,Technology
+STMPA.PA,STMicroelectronics,Technology
+CAP.PA,Capgemini,Technology
+DSY.PA,Dassault Systemes,Technology
+NOKIA.HE,Nokia,Technology
+ASM.AS,ASM International,Technology
+BESI.AS,BE Semiconductor,Technology
+VIV.PA,Vivendi,Media
+PUB.PA,Publicis,Media
+WKL.AS,Wolters Kluwer,Media
+URW.PA,Unibail-Rodamco-Westfield,Real estate
+LI.PA,Klepierre,Real estate
+COV.PA,Covivio,Real estate
+GFC.PA,Gecina,Real estate

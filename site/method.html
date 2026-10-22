@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Method: Euro Pairs</title>
+<meta name="description" content="How the Euro Pairs study works: data, cleaning, the distance, cointegration and Kalman filter methods, the backtest protocol, costs, statistics and limitations.">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M3 22 Q10 6 16 16 T29 10' fill='none' stroke='%232a78d6' stroke-width='3'/%3E%3Cpath d='M3 12 Q10 26 16 16 T29 22' fill='none' stroke='%23eb6834' stroke-width='3'/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site"><div class="wrap">
+  <a class="brand" href="./">Euro Pairs</a>
+  <nav><a href="./">Results</a><a href="method.html" aria-current="page">Method</a><a href="./#book">Open positions</a></nav>
+</div></header>
+
+<main id="main"><div class="wrap">
+<section class="prose">
+  <h1>How the study works</h1>
+  <p class="lede">Three textbook ways to trade pairs, run side by side under one set of rules that was fixed before any result was seen, with realistic costs and statistics that correct for luck.</p>
+
+  <h2>The question</h2>
+  <p>Pair trading buys one stock and sells a similar one when their prices drift unusually far apart, and unwinds when they come back together. It made money in US stocks in the 1960s–1990s (Gatev, Goetzmann and Rouwenhorst, 2006) but later studies found the profits shrinking (Do and Faff, 2010). This study asks two things for euro-area large caps since 2004: does pair trading still make money after realistic costs, and which of the three classic ways of choosing and hedging pairs holds up best?</p>
+
+  <h2>Data</h2>
+  <p>Daily closing prices adjusted for splits and dividends, from Yahoo Finance, for <b data-k="universe.length">…</b> large caps listed in euros (Germany, France, Italy, Spain, the Netherlands, Belgium, Finland, Austria, Portugal and Ireland), from 2003. Staying in one currency keeps exchange rates out of every pair. Pairs are only formed between stocks in the same sector, which gives <b data-k="candidate_pairs">…</b> candidate pairs.</p>
+  <p>Free price data has errors, and a pair strategy is very sensitive to them: one bad print looks like a huge spread and a guaranteed profit. The cleaning rules, applied in this order:</p>
+  <ol>
+    <li>Non-positive prices, left by a broken dividend back-adjustment (Crédit Agricole before 2004, AB InBev before 2008), are treated as missing.</li>
+    <li>Days when most markets were shut are dropped; gaps of up to five days (local holidays) are filled with the last price.</li>
+    <li>A jump of more than 25% that returns to within 10% of its starting level inside five days is a bad print, and is removed.</li>
+    <li>The confirmed errors below are fixed by hand: a single date has its jump removed by rescaling the earlier history; a range is removed.</li>
+  </ol>
+  <p>Real crashes stay in. Fortis losing three quarters of its value in October 2008 or the Irish banks in 2009 are exactly what a pair trader had to live through; removing them would flatter the results.</p>
+  <div class="scroll"><table id="corrections"></table></div>
+  <h3>The universe</h3>
+  <div class="scroll"><table id="universe"></table></div>
+
+  <h2>The backtest protocol</h2>
+  <p>Every month a new cohort starts. It looks back over the past <b data-k="params.formation_days">…</b> trading days (about a year, the <em>formation period</em>) to pick its <b data-k="params.pairs">…</b> best pairs, then trades them for the next <b data-k="params.trading_days">…</b> days (about six months, the <em>trading period</em>). So six cohorts are always running side by side, and the portfolio return is their average, as in Gatev et al. A pair can only be chosen from data that ended before it trades: every result is out of sample.</p>
+  <ul>
+    <li><b>Signal.</b> Each method turns the pair into a z-score: how many standard deviations the spread is from where it should be.</li>
+    <li><b>Entry and exit.</b> Open when the z-score goes beyond ±<span data-k="params.entry">…</span>: sell the expensive stock and buy the cheap one. Close when the z-score crosses <span data-k="params.exit">…</span>. Anything still open when the six months end is closed then, win or lose.</li>
+    <li><b>Execution.</b> A signal seen at one day's close is traded at the next day's close. This removes the bid-ask bounce that flatters same-day execution.</li>
+    <li><b>Sizing.</b> Each pair gets one unit of capital: one unit long and one unit short, split by the hedge ratio. The cohort's return is total pair profit divided by the number of pairs it was meant to hold, whether or not they traded (the "committed capital" return, the conservative choice).</li>
+    <li><b>Costs.</b> <span data-k="params.cost_bps">…</span> basis points of the amount traded, per leg and per side, covering commission, half the bid-ask spread and market impact for liquid large caps. Shorting costs <span data-k="params.borrow" data-fmt="pct">…</span> a year of the short position. The results page shows what happens from 0 to 30 bps.</li>
+  </ul>
+
+  <h2>The three methods</h2>
+  <h3>1. Distance (Gatev, Goetzmann and Rouwenhorst, 2006)</h3>
+  <p>Rebase both prices to 1 at the start of formation and pick the pairs whose paths are closest: the smallest sum of squared differences.</p>
+  <p class="formula">SSD = Σ<sub>t</sub> (p̃<sub>A,t</sub> − p̃<sub>B,t</sub>)², &nbsp; p̃<sub>t</sub> = P<sub>t</sub> / P<sub>0</sub></p>
+  <p>In trading, prices are rebased again at the start and the spread p̃<sub>A</sub> − p̃<sub>B</sub> is divided by its formation standard deviation. The hedge is one euro long for one euro short. Simple and model-free, but nothing guarantees that two stocks that moved together will keep doing so.</p>
+
+  <h3>2. Cointegration (Engle and Granger, 1987; Vidyamurthy, 2004)</h3>
+  <p>Regress one log price on the other over the formation period, and test whether what is left over keeps returning to zero:</p>
+  <p class="formula">log P<sub>A,t</sub> = α + β log P<sub>B,t</sub> + ε<sub>t</sub> &nbsp;&nbsp; then &nbsp;&nbsp; Δε<sub>t</sub> = ρ ε<sub>t−1</sub> + γ Δε<sub>t−1</sub> + u<sub>t</sub></p>
+  <p>A pair qualifies when the Engle–Granger test rejects "no cointegration" at the <span data-k="params.p_max">…</span> level (MacKinnon 2010 p-values for two variables), the hedge ratio β is positive, and the half-life of the spread, ln 2 / −ln(1 + ρ), is between one day and the length of the trading period. The most significant pairs are kept. The z-score is ε<sub>t</sub> divided by its formation standard deviation, and the hedge puts β euros on stock B for every euro on stock A.</p>
+
+  <h3>3. Kalman filter hedge (Chan, 2013)</h3>
+  <p>The same pairs as the cointegration method, so the only difference is how the hedge is set. Instead of fixing α and β for six months, a Kalman filter lets them drift as a random walk and updates them every day:</p>
+  <p class="formula">y<sub>t</sub> = β<sub>t</sub> x<sub>t</sub> + α<sub>t</sub> + v<sub>t</sub>, &nbsp; (β<sub>t</sub>, α<sub>t</sub>) = (β<sub>t−1</sub>, α<sub>t−1</sub>) + w<sub>t</sub>, &nbsp; Var(w) = δ / (1 − δ) · I</p>
+  <p>Here y and x are log prices rebased to zero at the start of formation, δ = <span data-k="params.kalman_delta">…</span>, and the noise of v<sub>t</sub> is the variance of the formation-period residual. The filter starts from the formation estimates. The z-score is the forecast error divided by its predicted standard deviation, both computed before that day's price is seen. Position size uses the β known on the day the signal fires and is then held fixed.</p>
+
+  <h2>Statistics</h2>
+  <ul>
+    <li><b>Return a year</b> is compound annual growth. <b>Sharpe ratio</b> is the mean daily return over its standard deviation, times √252. No risk-free rate is subtracted, because a long-short book is self-financing; in practice the cash collateral would also earn interest.</li>
+    <li><b>t-statistic</b> uses Newey–West standard errors (10 lags), because overlapping cohorts make daily returns autocorrelated.</li>
+    <li><b>Deflated Sharpe ratio</b> (Bailey and López de Prado, 2014) is the probability that the true Sharpe ratio beats the best one you would expect by luck from the <b data-k="params.trials">…</b> variants run (three methods × three entry levels), allowing for skew and fat tails. Above 95% is the usual bar.</li>
+    <li><b>Beta</b> and <b>correlation</b> are measured against the equal-weighted universe with dividends. A working pair strategy should be close to zero on both.</li>
+  </ul>
+
+  <h2>Limitations</h2>
+  <ul>
+    <li><b>Survivorship bias.</b> The universe is today's large caps. Firms that were taken over, went bust or shrank out of the index are missing. Pairs whose stocks later failed are exactly the ones that diverge for good, so the backtest is probably too kind.</li>
+    <li><b>Free data.</b> Yahoo's adjusted prices contain errors. The rules above catch the large ones; small ones remain.</li>
+    <li><b>Flat costs.</b> Real costs rise in a crisis, when spreads widen and borrowing gets scarce or recalled. Stocks can become impossible to short (bans on financials in 2008 and 2011).</li>
+    <li><b>Closing prices only.</b> No intraday data, no auctions modelled, no capacity limit.</li>
+    <li><b>One parameter set.</b> The rules follow the literature and were fixed in advance; the entry level is varied as a robustness check only. A desk would add stop-losses, sector limits and volatility sizing.</li>
+    <li><b>Simple returns within a cohort.</b> Profits are not reinvested inside a six-month trading period, only between periods.</li>
+  </ul>
+
+  <h2>Reproduce it</h2>
+  <p>Everything is open source. With <a href="https://docs.astral.sh/uv/">uv</a> installed:</p>
+  <p class="formula" style="font-style:normal;font-family:ui-monospace,Consolas,monospace">uv sync<br>uv run pytest<br>uv run python -m pipeline</p>
+  <p>The last command downloads prices, runs every cohort (under a minute), and writes <a href="data/results.json">data/results.json</a>, the file this site reads. Use it however you like; please cite the site.</p>
+
+  <h2>References</h2>
+  <ol class="refs">
+    <li>Bailey, D. H. and López de Prado, M. (2012). The Sharpe ratio efficient frontier. <i>Journal of Risk</i>, 15(2).</li>
+    <li>Bailey, D. H. and López de Prado, M. (2014). The deflated Sharpe ratio: correcting for selection bias, backtest overfitting and non-normality. <i>Journal of Portfolio Management</i>, 40(5).</li>
+    <li>Chan, E. (2013). <i>Algorithmic Trading: Winning Strategies and Their Rationale</i>. Wiley.</li>
+    <li>Do, B. and Faff, R. (2010). Does simple pairs trading still work? <i>Financial Analysts Journal</i>, 66(4).</li>
+    <li>Engle, R. F. and Granger, C. W. J. (1987). Co-integration and error correction: representation, estimation, and testing. <i>Econometrica</i>, 55(2).</li>
+    <li>Gatev, E., Goetzmann, W. N. and Rouwenhorst, K. G. (2006). Pairs trading: performance of a relative-value arbitrage rule. <i>Review of Financial Studies</i>, 19(3).</li>
+    <li>Krauss, C. (2017). Statistical arbitrage pairs trading strategies: review and outlook. <i>Journal of Economic Surveys</i>, 31(2).</li>
+    <li>MacKinnon, J. G. (2010). Critical values for cointegration tests. Queen's Economics Department Working Paper 1227.</li>
+    <li>Newey, W. K. and West, K. D. (1987). A simple, positive semi-definite, heteroskedasticity and autocorrelation consistent covariance matrix. <i>Econometrica</i>, 55(3).</li>
+    <li>Rad, H., Low, R. K. Y. and Faff, R. (2016). The profitability of pairs trading strategies: distance, cointegration and copula methods. <i>Quantitative Finance</i>, 16(10).</li>
+    <li>Vidyamurthy, G. (2004). <i>Pairs Trading: Quantitative Methods and Analysis</i>. Wiley.</li>
+  </ol>
+</section>
+</div></main>
+
+<footer><div class="wrap">
+  <p id="stamp"></p>
+  <p>Prices from Yahoo Finance; only derived results are published. Code under the MIT licence; results free to reuse with credit. This is research, not investment advice.</p>
+</div></footer>
+<script src="app.js"></script>
+</body>
+</html>

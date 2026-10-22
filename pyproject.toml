@@ -1,0 +1,22 @@
+[project]
+name = "pair-trading"
+version = "0.1.0"
+description = "Study of pair trading methods on euro-area equities, published as a static website"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = [
+    "numpy>=2.5.4",
+    "pandas>=3.1.0",
+    "scipy>=1.17",
+    "statsmodels>=0.15.0",
+    "yfinance>=1.7.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
