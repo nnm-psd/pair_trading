@@ -112,3 +112,21 @@ def test_factor_regression_recovers_loading():
     r = 0.5 * F.REV + rng.normal(0, 0.002, 3000)
     f = stats.factor_regression(r, F)
     assert abs(f["betas"]["REV"] - 0.5) < 0.05 and abs(f["alpha_t"]) < 3
+
+
+def test_live_record_is_append_only(tmp_path, monkeypatch):
+    from pipeline import __main__ as main
+
+    monkeypatch.setattr(main, "LIVE", tmp_path / "track.csv")
+    idx = pd.bdate_range("2026-01-05", periods=10)
+    rf = pd.Series(0.0001, index=idx)
+    nets = {"kalman": pd.Series(0.001, index=idx[:5])}
+
+    monkeypatch.delenv("CI", raising=False)
+    assert main.record_live(nets, rf).empty  # a local run never writes
+    monkeypatch.setenv("CI", "true")
+    assert list(main.record_live(nets, rf).date) == [idx[4]]  # first run: latest day only
+
+    revised = {"kalman": pd.Series(-0.5, index=idx[:8])}  # history rewritten by a later backtest
+    track = main.record_live(revised, rf)
+    assert len(track) == 4 and track.excess.iloc[0] == 0.001  # old row untouched, three new days appended

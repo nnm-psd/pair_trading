@@ -223,6 +223,27 @@ function book() {
   $("book-table").innerHTML = head + `<tbody>${body || `<tr><td colspan="7">No open position for this method today.</td></tr>`}</tbody><caption>${all.length} open pairs, sorted by how wide the spread is. "Cohorts" counts the monthly cohorts holding the same pair; the row shows the newest.</caption>`;
 }
 
+function liveRecord() {
+  const L = R.live;
+  const audit = `Each day's result is appended to a public file by the scheduled job and is never revised (model version ${L.version}).`;
+  if (!L.start) {
+    $("live-text").textContent = `Everything above is a backtest. The live record starts with the first scheduled run after publication: from then on, the headline variant of each method is tracked out of sample. ${audit}`;
+    return;
+  }
+  $("live-text").textContent = `Since ${longDate(L.start)} the headline variants have run live, with no changes to the code or settings. ${audit} The range is what the backtest would expect over the same number of days (±2 standard deviations).`;
+  const ks = KEYS.filter((k) => L.methods[k]);
+  $("live-table").innerHTML = `<thead><tr><th scope="col"></th><th scope="col">Trading days</th><th scope="col">Return above cash</th><th scope="col">Backtest range</th><th scope="col">Sharpe</th><th scope="col" class="t-left">Verdict</th></tr></thead><tbody>` +
+    ks.map((k) => {
+      const m = L.methods[k], lo = m.expected - m.band, hi = m.expected + m.band;
+      const v = m.total < lo ? "Below what the backtest expects" : m.total > hi ? "Above what the backtest expects" : "In line with the backtest";
+      return `<tr><th scope="row">${METHODS[k].label}</th><td>${m.days}</td><td>${signed(m.total, 2)}</td><td>${signed(lo, 1)} to ${signed(hi, 1)}</td><td>${m.sharpe == null ? '<span class="sub">after 60 days</span>' : num(m.sharpe)}</td><td class="t-left">${v}</td></tr>`;
+    }).join("") + "</tbody>";
+  if (!ks.length) return;
+  $("live-fig").hidden = false;
+  const xs = L.methods[ks[0]].dates.map(ts);
+  chart($("live-chart"), () => lines($("live-chart"), xs, ks.map((k) => ({ label: METHODS[k].label, data: L.methods[k].cum, color: METHODS[k].color })), { yFmt: (v) => pct(v, 1), height: 240 }));
+}
+
 const FACTORS = { MKT: "Market", SMB: "Size (small minus big)", HML: "Value", RMW: "Profitability", CMA: "Investment", WML: "Momentum", REV: "Short-term reversal, within sector" };
 const tcell = (b, t) => `${num(b, 3)} <span class="sub">t ${num(t, 1)}</span>`;
 const pcell = (p) => `<td${p < 0.05 ? ' class="best"' : ""}>${num(p)}</td>`;
@@ -291,7 +312,7 @@ fetch("data/results.json")
     R = data;
     $("stamp") && ($("stamp").textContent = `Prices to ${longDate(R.data_end)} close. Rebuilt ${R.generated.replace("T", " ").replace("+00:00", " UTC")} by a scheduled job after each European trading day.`);
     if ($("summary")) {
-      hero(); summary(); evidence(); equity(); risk(); yearly(); costs(); trades(); book();
+      hero(); summary(); liveRecord(); evidence(); equity(); risk(); yearly(); costs(); trades(); book();
       document.querySelectorAll("[data-cost]").forEach((b) => b.addEventListener("click", () => {
         costMode = b.dataset.cost;
         document.querySelectorAll("[data-cost]").forEach((x) => x.setAttribute("aria-pressed", x === b));

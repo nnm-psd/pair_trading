@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 from statsmodels.tsa.adfvalues import mackinnonp
 
+MODEL_VERSION = "1.0"  # bump whenever the headline model changes; the live record is kept per version
 TRADE = 126
 FORMS, NS, ENTRIES = (126, 252, 378), (10, 20, 40), (1.5, 2.0, 2.5)
 BASE = (252, 20, 2.0)  # (formation days, pairs, entry z)

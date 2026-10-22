@@ -4,6 +4,7 @@
     uv run python -m pipeline --cached   # reuse the files in data/
 """
 import json
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -32,6 +33,51 @@ def rd(d: dict) -> dict:
 
 def weekly(s: pd.Series) -> list:
     return [r4(v) for v in s.resample("W-FRI").last().dropna()]
+
+
+LIVE = Path(__file__).parents[1] / "live" / "track.csv"
+
+
+def record_live(nets: dict, rf: pd.Series) -> pd.DataFrame:
+    """Append the headline variants' new daily returns to live/track.csv and return the whole record.
+
+    Only the scheduled CI job writes (CI=true), so a local run can never add to the record. Rows are never
+    rewritten: the file is what was published on the day. The first run records only the latest day; a run after
+    a gap fills the missing days, and `recorded` shows when each row was written."""
+    track = pd.read_csv(LIVE, parse_dates=["date"], dtype={"version": str}) if LIVE.exists() else pd.DataFrame(
+        columns=["date", "method", "excess", "rf", "version", "recorded"])
+    if os.environ.get("CI") == "true":
+        now = datetime.now(timezone.utc).isoformat(timespec="minutes")
+        new = []
+        for m, r in nets.items():
+            done = track[(track.method == m) & (track.version == strategy.MODEL_VERSION)]
+            last = done.date.max() if len(done) else r.index[-2]
+            new += [{"date": d, "method": m, "excess": round(v, 8), "rf": round(rf[d], 8),
+                     "version": strategy.MODEL_VERSION, "recorded": now} for d, v in r[r.index > last].items()]
+        if new:
+            track = pd.concat([track, pd.DataFrame(new)], ignore_index=True)
+            LIVE.parent.mkdir(exist_ok=True)
+            track.assign(date=pd.to_datetime(track.date).dt.date).to_csv(LIVE, index=False)
+    return track[track.version == strategy.MODEL_VERSION]
+
+
+def live_summary(track: pd.DataFrame, nets: dict) -> dict:
+    """Live cumulative returns next to what the backtest would expect over the same number of days."""
+    out = {"version": strategy.MODEL_VERSION, "start": None, "methods": {}}
+    if track.empty:
+        return out
+    out["start"] = pd.to_datetime(track.date).min().date().isoformat()
+    for m, g in track.groupby("method"):
+        g = g.sort_values("date")
+        r, bt = g.excess.astype(float), nets[m]
+        n = len(r)
+        out["methods"][m] = {
+            "dates": [pd.Timestamp(d).date().isoformat() for d in g.date], "cum": [r4(v) for v in (1 + r).cumprod() - 1],
+            "days": n, "total": r4((1 + r).prod() - 1), "sharpe": r4(stats.sharpe(r)) if n >= 60 else None,
+            # backtest expectation for n days: mean ± 2 standard deviations of the sum of n daily returns
+            "expected": r4(bt.mean() * n), "band": r4(2 * bt.std() * np.sqrt(n)),
+        }
+    return out
 
 
 def main() -> None:
@@ -131,6 +177,7 @@ def main() -> None:
         "pbo_all": r4(stats.pbo(grid)),
         "methods": methods,
         "positions": positions,
+        "live": live_summary(record_live(nets, rf), nets),
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(result, separators=(",", ":")))
