@@ -27,12 +27,15 @@
   <p>Daily closing prices adjusted for splits and dividends, from Yahoo Finance, for <b data-k="universe.length">…</b> large caps listed in euros (Germany, France, Italy, Spain, the Netherlands, Belgium, Finland, Austria, Portugal and Ireland), from 2003. Staying in one currency keeps exchange rates out of every pair. Pairs are only formed between stocks in the same sector, which gives <b data-k="candidate_pairs">…</b> candidate pairs.</p>
   <p>Free price data has errors, and a pair strategy is very sensitive to them: one bad print looks like a huge spread and a guaranteed profit. The cleaning rules, applied in this order:</p>
   <ol>
-    <li>Non-positive prices, left by a broken dividend back-adjustment (Crédit Agricole before 2004, AB InBev before 2008), are treated as missing.</li>
+    <li><b>Self-audit.</b> Yahoo's adjusted price must agree with its raw price plus dividends: each day's adjusted return should equal (close + dividend) / previous close − 1. Where the two differ by more than 2%, the back-adjustment is broken, so the raw-based return is used and the price series is rebuilt from returns. This also removes the negative prices left by broken adjustments (Crédit Agricole before 2004, AB InBev before 2008). The days fixed are listed below.</li>
     <li>Days when most markets were shut are dropped; gaps of up to five days (local holidays) are filled with the last price.</li>
     <li>A jump of more than 25% that returns to within 10% of its starting level inside five days is a bad print, and is removed.</li>
-    <li>The confirmed errors below are fixed by hand: a single date has its jump removed by rescaling the earlier history; a range is removed.</li>
+    <li>Errors in both raw and adjusted prices are fixed by hand, from the list below: a single date has its jump removed by rescaling the earlier history; a range is removed.</li>
   </ol>
   <p>Real crashes stay in. Fortis losing three quarters of its value in October 2008 or the Irish banks in 2009 are exactly what a pair trader had to live through; removing them would flatter the results.</p>
+  <h3>Days fixed by the self-audit</h3>
+  <div class="scroll"><table id="audit"></table></div>
+  <h3>Corrections by hand</h3>
   <div class="scroll"><table id="corrections"></table></div>
   <h3>The universe</h3>
   <div class="scroll"><table id="universe"></table></div>
@@ -88,7 +91,7 @@
 
   <h2>Limitations</h2>
   <ul>
-    <li><b>Survivorship bias.</b> The universe is today's large caps. Firms that were taken over, went bust or shrank out of the index are missing. Pairs whose stocks later failed are exactly the ones that diverge for good, so the backtest is probably too kind.</li>
+    <li><b>Survivorship bias.</b> The universe is today's large caps. Firms that were taken over or went bust are missing, because free data sources delete their history; past index memberships are not freely available either (Wikipedia's old versions of the index page are incomplete or stale). The results page measures the part that can be measured (firms that grew into the list later) and shows what a collapse does to a trade. Pairs whose stocks failed are exactly the ones that diverge for good, so the backtest is probably still too kind.</li>
     <li><b>Free data.</b> Yahoo's adjusted prices contain errors. The rules above catch the large ones; small ones remain.</li>
     <li><b>Modelled frictions.</b> Spreads are modelled from volatility, not measured from quotes. The borrow fee is flat, while real fees jump for hard-to-borrow stocks and loans can be recalled. Ban dates come from regulators' announcements as reported by law firms and the press; two are approximate and flagged in the table. Belgium's stock-exchange tax is left out because foreign institutions are exempt.</li>
     <li><b>Closing prices only.</b> No intraday data, no auctions modelled, no capacity limit.</li>

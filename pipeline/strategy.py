@@ -14,6 +14,7 @@ import itertools
 import os
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
+from functools import partial
 
 import numpy as np
 import pandas as pd
@@ -197,16 +198,16 @@ def _init(px: pd.DataFrame, pairs: list, fr: dict) -> None:
     _PX, _PAIRS, _FR = px, pairs, fr
 
 
-def _cohort(s: int):
+def _cohort(s: int, grid: bool = True):
     """One monthly cohort, every variant. Pair P&L does not depend on how many pairs are held, so the best
     max(NS) pairs are simulated once and smaller portfolios are prefixes of that ranking."""
     px, lp = _PX, np.log(_PX)
     end, final = min(s + TRADE, len(px)), s + TRADE <= len(px)
     trade_px, dates = px.iloc[s:end].ffill(), px.index[s:end]
     out, trades, live, n_selected = {}, [], [], {}
-    for f in FORMS:
+    for f in FORMS if grid else (BASE[0],):
         form = lp.iloc[s - f:s]
-        ok = form.columns[form.notna().all() & lp.iloc[s].notna()]
+        ok = form.columns[form.notna().all() & lp.iloc[s].notna() & _FR["eligible"].iloc[s]]
         pairs = [p for p in _PAIRS if p[0] in ok and p[1] in ok]
         coint = select_cointegration(form[ok], pairs, max(NS))
         chosen = {"distance": select_distance(form[ok], pairs, max(NS)), "cointegration": coint, "kalman": coint}
@@ -216,7 +217,7 @@ def _cohort(s: int):
             frs = [tuple(_FR[k][p[leg]].to_numpy()[s:end] for k in ("spread", "tax", "ban") for leg in ("a", "b"))
                    for p in chosen[m]]
             sig = [signals(m, p, form, trade_px) for p in chosen[m]]
-            for e in ENTRIES:
+            for e in ENTRIES if grid else (BASE[2],):
                 acc = np.zeros((len(FIELDS), max(NS) + 1, end - s))
                 for i, (pair, (pa, pb), (z, beta), fr) in enumerate(zip(chosen[m], legs, sig, frs)):
                     r = simulate(pa, pb, z, beta, e, final, fr)
@@ -232,21 +233,23 @@ def _cohort(s: int):
                                      "opened": dates[o["opened"]], "side": o["side"], "pnl": o["pnl"],
                                      "beta": o["beta"], "z": pd.Series(z, index=dates)})
                 cum = acc.cumsum(axis=1)
-                for n in NS:
+                for n in NS if grid else (BASE[1],):
                     out[(m, f, n, e)] = cum[:, n] / n
     return s, end, out, trades, live, n_selected
 
 
-def run(px: pd.DataFrame, sectors: pd.Series, fr: dict):
-    """Run every cohort for every variant, in parallel. Returns {variant: daily DataFrame of FIELDS}, the trades
-    and still-open positions of the BASE variant, and the mean number of pairs found per cohort."""
+def run(px: pd.DataFrame, sectors: pd.Series, fr: dict, grid: bool = True):
+    """Run every cohort for every variant (or only BASE if grid=False), in parallel. fr holds the frictions and an
+    optional `eligible` mask (stocks allowed into a cohort on its first day). Returns {variant: daily DataFrame of
+    FIELDS}, the trades and still-open positions of the BASE variant, and the mean number of pairs found per cohort."""
+    fr = {"eligible": pd.DataFrame(True, index=px.index, columns=px.columns)} | fr
     pairs_all = candidate_pairs(sectors[sectors.index.isin(px.columns)])
     n = len(px)
-    acc = {k: np.zeros((len(FIELDS), n)) for k in variants()}
+    acc = {k: np.zeros((len(FIELDS), n)) for k in (variants() if grid else [(m, *BASE) for m in METHODS])}
     active = np.zeros(n)
     trades, live, n_selected = [], [], {}
     with ProcessPoolExecutor(os.cpu_count(), initializer=_init, initargs=(px, pairs_all, fr)) as ex:
-        for s, end, out, tr, lv, ns in ex.map(_cohort, cohort_starts(px.index), chunksize=4):
+        for s, end, out, tr, lv, ns in ex.map(partial(_cohort, grid=grid), cohort_starts(px.index), chunksize=4):
             active[s:end] += 1
             for k, v in out.items():
                 acc[k][:, s:end] += v

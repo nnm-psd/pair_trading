@@ -274,6 +274,24 @@ function evidence() {
     `</tbody><caption>The sample is cut exactly in half, a rule fixed in advance rather than a date picked from the chart. The p-value tests whether the average return changed.</caption>`;
 
   strip();
+  survivorship();
+}
+
+function survivorship() {
+  const S = R.survivorship, M = (k) => S.methods[k];
+  $("surv-text").textContent = `The study uses companies that exist today. That flatters a backtest in two ways. Companies that grew into large caps later were in the list from the start; dropping, at every formation date, the ${pct(S.screen, 0)} least-traded stocks at that time removes them. And companies that failed or were taken over are missing altogether: Yahoo deletes their history, so Dexia, Hypo Real Estate, Wirecard, Banco Popular, Banco Espírito Santo and others cannot be put back. What such a collapse does to a pair can be seen in the trades that held a stock that fell 40% or more.`;
+  const rows = [
+    ["Sharpe ratio, all stocks", (m) => num(m.sharpe_all)],
+    [`Sharpe ratio, most-traded ${pct(1 - S.screen, 0)} at the time`, (m) => num(m.sharpe_screened)],
+    ["Return above cash a year, all stocks", (m) => pct(m.excess_all, 2)],
+    ["Return above cash a year, most-traded only", (m) => pct(m.excess_screened, 2)],
+    ["Trades where one stock fell 40% or more", (m) => `${m.collapses} <span class="sub">${pct(m.collapse_share, 1)} of trades</span>`],
+    ["Average result of those trades", (m) => signed(m.collapse_mean, 1)],
+    ["Their share of all losses on trades", (m) => pct(m.collapse_loss_share, 0)],
+  ];
+  $("surv").innerHTML = `<thead><tr><th scope="col"></th>${KEYS.map((k) => `<th scope="col">${METHODS[k].label}</th>`).join("")}</tr></thead><tbody>` +
+    rows.map(([l, f]) => `<tr><th scope="row">${l}</th>${KEYS.map((k) => `<td>${f(M(k))}</td>`).join("")}</tr>`).join("") +
+    `</tbody><caption>If keeping only the stocks that were liquid at the time does not lower the results, firms that grew later are not what drives them. The missing failures cannot be measured; each one would add a trade like those in the last three rows, so the backtest is still probably too kind.</caption>`;
 }
 
 function strip() {
@@ -313,6 +331,8 @@ function methodPage() {
     R.taxes.map((t) => `<tr><td>${COUNTRY[t.country]}</td><td>${t.start}</td><td>${t.end || "today"}</td><td>${pct(t.rate, 2)}</td><td class="t-left" style="white-space:normal">${esc(t.note)}</td></tr>`).join("") + "</tbody>";
   $("bans").innerHTML = `<thead><tr><th scope="col">Country</th><th scope="col" class="t-left">Stocks</th><th scope="col">From</th><th scope="col">To</th><th scope="col" class="t-left">Note</th></tr></thead><tbody>` +
     R.bans.map((b) => `<tr><td>${COUNTRY[b.country]}</td><td class="t-left">${b.scope === "all" ? "All" : "Banks, insurers"}</td><td>${b.start}</td><td>${b.end}</td><td class="t-left" style="white-space:normal">${esc(b.note)}</td></tr>`).join("") + "</tbody>";
+  $("audit").innerHTML = `<thead><tr><th scope="col">Stock</th><th scope="col">Day fixed</th></tr></thead><tbody>` +
+    R.data_quality.fixed.map((f) => `<tr><td>${esc(f.name)} <span class="sub">${f.ticker}</span></td><td>${f.date}</td></tr>`).join("") + "</tbody>";
   $("corrections").innerHTML = `<thead><tr><th scope="col">Stock</th><th scope="col">Date</th><th scope="col" class="t-left">What was wrong</th></tr></thead><tbody>` +
     R.corrections.map((c) => `<tr><td>${esc(c.name)} <span class="sub">${c.ticker}</span></td><td>${c.date}${c.end ? ` to ${c.end}` : ""}</td><td class="t-left" style="white-space:normal">${esc(c.reason)}</td></tr>`).join("") + "</tbody>";
 }

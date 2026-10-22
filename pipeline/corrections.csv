@@ -1,9 +1,9 @@
 ticker,date,end,reason
 BKT.MC,2004-02-03,2004-03-01,month-long x7.6 bad print; masked
+ENGI.PA,2003-01-01,2005-07-07,Gaz de France listed on 8 July 2005; earlier prices are a stale placeholder
 ISP.MI,2003-04-22,,stale quote followed by a jump; no matching news
 LI.PA,2003-04-24,,stale quote followed by a -33% step; adjustment error
-ITX.MC,2005-09-27,,+46% step with no reversal and no news; adjustment error
-ITX.MC,2006-09-26,,+46% step with no reversal and no news; adjustment error
 BKT.MC,2013-04-04,,+45% step with no news; adjustment error
 VIV.PA,2024-12-09,,spin-off of Canal+ / Havas / Louis Hachette not reflected in adjusted prices
 VIV.PA,2024-12-16,,follow-up step of the same spin-off
+ABI.BR,2008-11-25,,rights issue booked as a 13.04 dividend; the day's return is neutralised

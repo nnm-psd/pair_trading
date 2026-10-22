@@ -18,6 +18,7 @@ from .strategy import BASE, ENTRIES, METHODS
 
 OUT = Path(__file__).parents[1] / "site" / "data" / "results.json"
 BASE_COST = None  # the realistic cost model in costs.py; COSTS below are flat alternatives
+SCREEN = 0.3  # survivorship check: drop the least-traded 30% of stocks at each formation date
 CAPACITY_ADV = 0.1  # a trade may take at most this share of a stock's daily volume
 COSTS = (0, 5, 10, 20, 30)
 
@@ -94,10 +95,35 @@ def capacity(t: pd.DataFrame, adv: pd.DataFrame) -> dict:
     return {"aum": r4(np.nanpercentile(limit, 5)), "median_trade": r4(np.nanmedian(limit))}
 
 
+def survivorship(px, sectors, fr, adv, nets, trades, rf, mkt) -> dict:
+    """Two checks on the bias from using today's stock list.
+    1. Rerun the headline variants with only the stocks that were among the most traded at each formation date,
+       which drops companies that are in the list only because they grew later.
+    2. Measure what trades cost when one stock collapsed (fell 40%+ while held): the kind of trade that firms
+       missing from the data (Dexia, Wirecard, Banco Popular...) would have produced."""
+    eligible = (adv.rank(axis=1, pct=True) > SCREEN).fillna(False)
+    screened, *_ = strategy.run(px, sectors, fr | {"eligible": eligible}, grid=False)
+    p = px.ffill()
+    out = {"screen": SCREEN, "methods": {}}
+    for m in METHODS:
+        r2 = stats.net(screened[(m, *BASE)], BASE_COST)
+        t = trades[trades.method == m]
+        move = np.minimum([p.at[c, a] / p.at[o, a] - 1 for o, c, a in zip(t.open, t.close, t.a)],
+                          [p.at[c, b] / p.at[o, b] - 1 for o, c, b in zip(t.open, t.close, t.b)])
+        hit = t[move <= -0.4]
+        out["methods"][m] = {
+            "sharpe_all": r4(stats.sharpe(nets[m])), "sharpe_screened": r4(stats.sharpe(r2)),
+            "excess_all": r4(nets[m].mean() * 252), "excess_screened": r4(r2.mean() * 252),
+            "collapses": len(hit), "collapse_share": r4(len(hit) / len(t)), "collapse_mean": r4(hit.pnl.mean()),
+            "collapse_loss_share": r4(hit.pnl.clip(upper=0).sum() / t.pnl.clip(upper=0).sum()),
+        }
+    return out
+
+
 def main() -> None:
     t0 = time.time()
     cached = "--cached" in sys.argv
-    px = data.load(cached=cached)
+    px, audit_fixed = data.load(cached=cached)
     sectors = data.UNIVERSE.sector
     fr = costs.frictions(px)
     out, trades, live, n_selected = strategy.run(px, sectors, fr)
@@ -203,6 +229,9 @@ def main() -> None:
         "tests": [rd(d) | {"a": d["a"], "b": d["b"]} for d in boot["diffs"]],
         "pbo_all": r4(stats.pbo(grid)),
         "methods": methods,
+        "survivorship": survivorship(px, sectors, fr, adv, nets, trades, rf, mkt),
+        "data_quality": {"tolerance": data.AUDIT_TOL, "fixed": [
+            {"ticker": t, "name": names[t], "date": d.date().isoformat()} for d, t in audit_fixed.stack()[lambda x: x].index]},
         "positions": positions,
         "live": live_summary(record_live(nets, rf), nets),
     }
