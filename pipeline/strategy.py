@@ -27,7 +27,7 @@ MODEL_VERSION = "1.0"  # bump whenever the headline model changes; the live reco
 TRADE = 126
 FORMS, NS, ENTRIES = (126, 252, 378), (10, 20, 40), (1.5, 2.0, 2.5)
 BASE = (252, 20, 2.0)  # (formation days, pairs, entry z)
-FIELDS = ("pnl", "traded", "short", "tax", "spread")
+FIELDS = ("pnl", "traded", "short", "tax", "spread", "gross")
 EXIT = 0.0
 P_MAX = 0.05  # Engle-Granger p-value cut-off
 KALMAN_DELTA = 1e-5  # state noise of the Kalman hedge ratio, on log prices rebased to 0 at formation start
@@ -146,20 +146,53 @@ def select_pca(form: pd.DataFrame, k: int, n: int) -> list[dict]:
     sd = r.std(0)
     w, v = np.linalg.eigh(np.corrcoef(((r - r.mean(0)) / sd).T))
     q = v[:, ::-1][:, :k] / sd[:, None]  # eigenportfolio weights
-    f = r[-PCA_WINDOW:] @ q
-    x = np.c_[np.ones(PCA_WINDOW), f]
-    coef = np.linalg.lstsq(x, r[-PCA_WINDOW:], rcond=None)[0]
-    cum = np.cumsum(r[-PCA_WINDOW:] - x @ coef, axis=0)
+    _, score, kappa = _ou_fit(r[-PCA_WINDOW:], r[-PCA_WINDOW:] @ q)
+    ok = np.flatnonzero(score != 0)
+    best = ok[np.argsort(-kappa[ok])][:n]
+    return [{"a": form.columns[i], "b": HEDGE, "q": q, "cols": form.columns, "score": kappa[i]} for i in best]
+
+
+def _ou_fit(r: np.ndarray, f: np.ndarray):
+    """Regress each column of r on the factors f (with intercept), fit the cumulative residual as AR(1).
+    Returns the factor betas, the s-score -m / sigma_eq (0 where the fit is not mean-reverting fast enough),
+    and kappa."""
+    x = np.c_[np.ones(len(f)), f]
+    coef = np.linalg.lstsq(x, r, rcond=None)[0]
+    cum = np.cumsum(r - x @ coef, axis=0)
     x0, x1 = cum[:-1], cum[1:]
     b = ((x0 - x0.mean(0)) * (x1 - x1.mean(0))).sum(0) / ((x0 - x0.mean(0)) ** 2).sum(0)
     a = x1.mean(0) - b * x0.mean(0)
     with np.errstate(invalid="ignore", divide="ignore"):
         kappa = -np.log(b) * 252
         eq = np.sqrt((x1 - a - b * x0).var(0) / (1 - b**2))
-    ok = np.flatnonzero((b > 0) & (b < 1) & (kappa > 252 / 30))
-    best = ok[np.argsort(-kappa[ok])][:n]
-    return [{"a": form.columns[i], "b": HEDGE, "q": q, "cols": form.columns, "alpha": coef[0, i], "betas": coef[1:, i],
-             "m": a[i] / (1 - b[i]), "sd": eq[i], "score": kappa[i]} for i in best]
+        score = -(a / (1 - b)) / eq  # the cumulative residual ends at 0, so s = (0 - m) / sigma_eq
+    ok = (b > 0) & (b < 1) & (kappa > 252 / 30)
+    return coef[1:], np.where(ok, score, 0.0), kappa
+
+
+def pca_signals(sel: list, lp: pd.DataFrame, s: int, end: int) -> None:
+    """Re-estimate the selected stocks' factor betas and OU fit every day on the latest PCA_WINDOW days, as
+    Avellaneda & Lee do (the eigenportfolios themselves stay those of the formation period). Adds to each pair:
+    z, the s-score at each close; hedge, the price of its factor hedge, rebalanced daily to the betas known at the
+    previous close."""
+    if not sel:
+        return
+    cols, q = sel[0]["cols"], sel[0]["q"]
+    idx = [list(cols).index(p["a"]) for p in sel]
+    r = np.diff(lp.iloc[s - PCA_WINDOW - 1:end][cols].ffill().to_numpy(), axis=0)  # row j = day s - PCA_WINDOW + j
+    f = r @ q
+    n = end - s
+    z, hedge = np.zeros((n, len(sel))), np.zeros((n, len(sel)))
+    betas, _, _ = _ou_fit(r[:PCA_WINDOW, idx], f[:PCA_WINDOW])  # known at the close before trading starts
+    for t in range(n):
+        row = PCA_WINDOW + t
+        if t:
+            hedge[t] = f[row] @ betas  # today's hedge return with yesterday's betas
+        w = slice(t + 1, row + 1)
+        betas, z[t], _ = _ou_fit(r[w][:, idx], f[w])
+    hedge = np.exp(np.cumsum(hedge, axis=0))
+    for i, p in enumerate(sel):
+        p["z"], p["hedge"] = z[:, i], hedge[:, i]
 
 
 def prepare(method: str, pair: dict, form: pd.DataFrame, trade_px: pd.DataFrame, s: int, end: int):
@@ -168,15 +201,12 @@ def prepare(method: str, pair: dict, form: pd.DataFrame, trade_px: pd.DataFrame,
     fr = lambda t: [_FR[k][t].to_numpy()[s:end] for k in ("spread", "tax", "ban")]
     pa = trade_px[pair["a"]].to_numpy()
     if method == "pca":
-        r = np.r_[np.zeros((1, len(pair["cols"]))), np.diff(np.log(trade_px[pair["cols"]].to_numpy()), axis=0)]
-        hedge = (r @ pair["q"]) @ pair["betas"]  # the stock's factor exposure, day by day
-        x = np.cumsum(r[:, list(pair["cols"]).index(pair["a"])] - pair["alpha"] - hedge)
-        z = (x - pair["m"]) / pair["sd"]
+        z = pair["z"]
         sa, ta, ba = fr(pair["a"])
         # the hedge is a basket: it pays the average stock's spread and tax, and is never banned (futures exist)
         sb, tb = (_FR[k].iloc[s:end][pair["cols"]].mean(axis=1).to_numpy() for k in ("spread", "tax"))
         frs = (sa, sb, ta, tb, ba, np.zeros(len(z), bool))
-        return pa, np.exp(np.cumsum(hedge)), z, np.ones(len(z)), frs, 1.25 / 2, False
+        return pa, pair["hedge"], z, np.ones(len(z)), frs, 1.25 / 2, False
     pb = trade_px[pair["b"]].to_numpy()
     (sa, ta, ba), (sb, tb, bb) = fr(pair["a"]), fr(pair["b"])
     frs = (sa, sb, ta, tb, ba, bb)
@@ -211,6 +241,7 @@ class PairResult:
     short: np.ndarray  # short notional held per day (borrow fee scales with it)
     tax: np.ndarray  # transaction tax paid per day (on purchases)
     spread: np.ndarray  # half-spread and commission paid per day, stock by stock
+    gross: np.ndarray  # long plus short value held at the close (2 per open pair at entry)
     trades: list = field(default_factory=list)
     open: dict | None = None  # the position still open on the last day of an unfinished period
 
@@ -255,6 +286,7 @@ def simulate(pa: np.ndarray, pb: np.ndarray, z: np.ndarray, beta: np.ndarray, en
                 opened = t
             pos = order
         res.short[t] = max(-sa * pa[t], 0) + max(-sb * pb[t], 0)
+        res.gross[t] = abs(sa) * pa[t] + abs(sb) * pb[t]
         # decide tomorrow's position from today's close
         if want == 0:
             if not stopped and beta[t] > 0 and abs(z[t]) > entry:
@@ -307,6 +339,8 @@ def _cohort(s: int, grid: bool = True, stop: float | None = None):
             if m == "pca":
                 ks = list(zip(NS, PCA_FACTORS)) if grid else [(BASE[1], PCA_FACTORS[NS.index(BASE[1])])]
                 runs = [(n, select_pca(form[ok], k, PCA_SLOTS)) for n, k in ks]
+                for _, sel in runs:
+                    pca_signals(sel, lp, s, end)
             else:
                 runs = [(None, chosen[m])]
             for n_key, sel in runs:

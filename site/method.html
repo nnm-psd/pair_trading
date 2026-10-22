@@ -18,6 +18,8 @@
 <main id="main"><div class="wrap">
 <section class="prose">
   <h1>How the study works</h1>
+  <h2 style="margin-top:28px">Abstract</h2>
+  <p id="abstract"></p>
   <p class="lede">Six ways to trade pairs, from the textbook classics to the methods that followed them, run side by side under one set of rules that was fixed before any result was seen, with realistic costs and statistics that correct for luck.</p>
 
   <h2>The question</h2>
@@ -86,7 +88,7 @@
   <p>how unusual each stock's move is, given the other's. The running sums of h<sub>1</sub> − ½ and h<sub>2</sub> − ½ are mispricing indices. The signal is their difference, entered at ±1 (±0.75 / 1 / 1.25 in the grid) and closed when it crosses zero.</p>
 
   <h3>6. PCA residuals (Avellaneda and Lee, 2010)</h3>
-  <p>Not pairs of stocks, but each stock against its own hedge. The formation-period correlation matrix gives eigenportfolios, statistical factors that capture what moves the whole market and its sectors. Each stock's returns over the last 60 days are regressed on the top 10 factors (5 / 10 / 15 in the grid), and the cumulative residual is fitted as an OU process. The 20 stocks that revert fastest, within about 30 trading days, are traded on the s-score, (X − m) / σ<sub>eq</sub>. A rich stock is sold and its factor hedge bought, and the reverse for a cheap one. Entry is at ±1.25 as in the paper (0.94 / 1.25 / 1.56 in the grid). Simplifications: parameters are re-estimated monthly, not daily; trades close when the s-score crosses zero, the shared rule; and the hedge pays the average stock's spread and tax, never banned, as a futures hedge would. Monthly re-estimation is the important one: as the month's parameters age, a stock's residual can drift far from its fitted mean (s-scores of 10 or more appear), so this is a lower bound on what the paper's daily version would do.</p>
+  <p>Not pairs of stocks, but each stock against its own hedge. The formation-period correlation matrix gives eigenportfolios, statistical factors that capture what moves the whole market and its sectors. Each stock's returns over the last 60 days are regressed on the top 10 factors (5 / 10 / 15 in the grid), and the cumulative residual is fitted as an OU process. The 20 stocks that revert fastest, within about 30 trading days, are traded on the s-score, (X − m) / σ<sub>eq</sub>. A rich stock is sold and its factor hedge bought, and the reverse for a cheap one. Entry is at ±1.25 as in the paper (0.94 / 1.25 / 1.56 in the grid). As in the paper, each stock's betas and OU fit are re-estimated every day on the latest 60 days, and the hedge is rebalanced to the betas known at the previous close. Simplifications: the eigenportfolios are recomputed monthly, not daily; the 20 stocks are chosen at the start of each cohort, where the paper trades every stock that qualifies on the day; trades close when the s-score crosses zero, the shared rule; and the hedge pays the average stock's spread and tax on its initial trades, never its daily rebalancing, and is never banned, as a futures hedge would not be.</p>
 
   <h3>Stop-loss overlay</h3>
   <p>Each method's headline variant is run again with a stop: when a trade's spread reaches <span data-k="stop_loss.level">…</span> (in the method's own units), the trade is closed and the pair is not traded again in that period.</p>
@@ -120,6 +122,12 @@
   <p>Everything is open source. With <a href="https://docs.astral.sh/uv/">uv</a> installed:</p>
   <p class="formula" style="font-style:normal;font-family:ui-monospace,Consolas,monospace">uv sync<br>uv run pytest<br>uv run python -m pipeline</p>
   <p>The last command downloads prices, runs every cohort (under a minute), and writes <a href="data/results.json">data/results.json</a>, the file this site reads. Use it however you like; please cite the site.</p>
+
+  <h2 id="data">Data and citation</h2>
+  <p>Everything the site shows can be downloaded: <a href="data/returns.csv">daily returns</a> of every method, the market and cash (CSV); <a href="data/trades.csv">every trade</a> of the headline variants (CSV); <a href="data/results.json">all results</a> (JSON); and the live record, <code>live/track.csv</code> in the code repository. Only derived results are published, never raw prices.</p>
+  <p id="cite-h"><b>How to cite</b></p>
+  <p class="formula" style="font-style:normal" id="cite"></p>
+  <p>The model version changes whenever the method changes, and every change is in the repository's history.</p>
 
   <h2>References</h2>
   <ol class="refs">

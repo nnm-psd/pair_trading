@@ -120,6 +120,19 @@ def survivorship(px, sectors, fr, adv, nets, trades, rf, mkt) -> dict:
     return out
 
 
+def anatomy(t: pd.DataFrame, sectors: pd.Series) -> dict:
+    """How one method's trades behave: return and holding-period distributions, by sector, by how they ended."""
+    ret_bins = np.arange(-0.2, 0.2001, 0.01)
+    day_bins = np.arange(0, strategy.TRADE + 7, 7)
+    ended = lambda g: {"n": len(g), "mean": r4(g.pnl.mean()), "win": r4((g.pnl > 0).mean()), "sum": r4(g.pnl.sum())}
+    return {
+        "ret_bins": [r4(b) for b in ret_bins], "ret_hist": np.histogram(t.pnl.clip(-0.2, 0.2), ret_bins)[0].tolist(),
+        "day_bins": day_bins.tolist(), "day_hist": np.histogram(t.days, day_bins)[0].tolist(),
+        "sectors": {s: ended(g) for s, g in t.groupby(t.a.map(sectors))},
+        "converged": ended(t[t.converged]), "window_end": ended(t[~t.converged]),
+    }
+
+
 def main() -> None:
     t0 = time.time()
     cached = "--cached" in sys.argv
@@ -163,6 +176,8 @@ def main() -> None:
                 "pairs_per_cohort": r4(n_selected[m]),
             },
             "turnover": r4(base[m].traded.mean() * 252),
+            "anatomy": anatomy(t, sectors),
+            "at_work": weekly(base[m].gross.rolling(5).mean() / 2),  # share of capital in open trades
             "cost_breakdown": rd({"gross": base[m].pnl.mean() * 252, "spread": base[m].spread.mean() * 252,
                                   "tax": base[m].tax.mean() * 252, "borrow": stats.BORROW * base[m].short.mean(),
                                   "cost_per_side": base[m].spread.sum() / base[m].traded.sum()}),
@@ -187,15 +202,19 @@ def main() -> None:
     for p in live:
         held.setdefault((p["method"], p["a"], p["b"]), []).append(p)
     newest = [max(ps, key=lambda p: p["cohort"]) | {"cohorts": len(ps)} for ps in held.values()]
+    recent = px.index[-strategy.TRADE:]  # every still-trading cohort started inside this window
     positions = []
     for p in sorted(newest, key=lambda p: -abs(p["z"].iloc[-1]) / p["entry"]):  # how far past its own entry level
         z = p["z"]
+        past = trades[(trades.method == p["method"]) & (trades.a == p["a"]) & (trades.b == p["b"])].tail(15)
         positions.append({
+            "history": [{"open": o.date().isoformat(), "close": c.date().isoformat(), "side": int(sd), "pnl": r4(x),
+                         "converged": bool(cv)} for o, c, sd, x, cv in zip(past.open, past.close, past.side, past.pnl, past.converged)],
             "method": p["method"], "a": p["a"], "b": p["b"], "a_name": names[p["a"]], "b_name": name(p["b"]),
             "sector": sectors[p["a"]], "cohort": p["cohort"].date().isoformat(),
             "opened": p["opened"].date().isoformat(), "side": p["side"], "z": r4(z.iloc[-1]),
             "pnl": r4(p["pnl"]), "beta": r4(p["beta"]), "cohorts": p["cohorts"], "entry": r4(p["entry"]),
-            "z_dates": [d.date().isoformat() for d in z.index], "z_hist": [r4(v) for v in z],
+            "z_from": int(recent.get_loc(z.index[0])), "z_hist": [r4(v) for v in z],
         })
 
     mkt_total = mkt + rf
@@ -236,12 +255,18 @@ def main() -> None:
         "data_quality": {"tolerance": data.AUDIT_TOL, "fixed": [
             {"ticker": t, "name": names[t], "date": d.date().isoformat()} for d, t in audit_fixed.stack()[lambda x: x].index]},
         "positions": positions,
+        "recent_days": [d.date().isoformat() for d in recent],
         "live": live_summary(record_live(nets, rf), nets),
         "stop_loss": {"level": strategy.STOP, "methods": {m: {"sharpe": r4(stats.sharpe(stops[m])), "excess": r4(stops[m].mean() * 252),
                                                                 "max_dd": r4(stats.drawdown(stops[m] + rf).min())} for m in METHODS}},
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(result, separators=(",", ":")))
+    # downloads: daily returns and the full trade log of the headline variants (derived data only)
+    pd.DataFrame({**{f"{m}_excess": nets[m] for m in METHODS}, "market_excess": mkt, "cash": rf}).round(8).to_csv(
+        OUT.with_name("returns.csv"), index_label="date")
+    trades.assign(**{c: trades[c].dt.date for c in ("cohort", "open", "close")}).round({"pnl": 6, "beta": 4}).to_csv(
+        OUT.with_name("trades.csv"), index=False)
     print(f"wrote {OUT} ({OUT.stat().st_size / 1e3:.0f} kB) in {time.time() - t0:.0f}s")
     for m in METHODS:
         n, f, h = methods[m]["net"], methods[m]["factors"], methods[m]["halves"]

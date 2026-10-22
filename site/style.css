@@ -123,6 +123,11 @@ footer { border-top: 1px solid var(--rule); margin-top: 56px; padding: 22px 0 40
 footer p { max-width: 80ch; }
 
 #grid-chart { padding: 12px 16px 4px; min-height: 0; }
+.bars { padding: 12px 12px 4px; }
+.bars text { font: 12px var(--sans); fill: var(--muted); }
+.bars .title { fill: var(--ink-2); font-size: 13px; }
+button.link { font: inherit; color: var(--link); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+tr[aria-current="true"] td { background: var(--gold-wash); }
 #grid-chart .tick { font: 12px var(--sans); fill: var(--muted); }
 #grid-chart .lab { font: 13px var(--sans); fill: var(--ink-2); }
 

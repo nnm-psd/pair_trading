@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+message: "If you use these results or this code, please cite it as below."
+title: "Euro Pairs: an open study of pair trading on euro-area stocks"
+type: software
+authors:
+  - family-names: Nguyen
+    given-names: Ngoc Minh
+license: MIT
+keywords:
+  - pair trading
+  - statistical arbitrage
+  - cointegration
+  - euro area equities

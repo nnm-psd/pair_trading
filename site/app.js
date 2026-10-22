@@ -80,8 +80,9 @@ function hero() {
   $("hero-text").textContent = `That is the widest open spread at the ${longDate(R.data_end)} close. The ${m} model bought ${longName} and sold ${shortName} on ${longDate(p.opened)}, betting the gap closes. So far the trade has made ${signed(p.pnl)} on the capital set aside for the pair.` +
     (Math.abs(p.z) > 4 ? ` A spread this wide usually means the relationship has broken, not that a bargain has appeared: this is the main way pair trading loses money. The rules have no stop-loss, so the position stays open until the spread converges or its six-month window ends.` : "");
   $("hero-cap").textContent = `Spread z-score of ${p.a_name} against ${p.b_name} since the pair's cohort started trading on ${longDate(p.cohort)}. A trade opens beyond the gold lines (±${num(p.entry, 2)}) and closes ${p.method === "ou" ? "at the opposite line" : "when the spread crosses zero"}.`;
-  const n = p.z_dates.length;
-  chart($("hero-chart"), () => lines($("hero-chart"), p.z_dates.map(ts), [{ label: `${p.a} vs ${p.b}`, data: p.z_hist, color: "--ink", width: 2.5 }], {
+  const days = R.recent_days.slice(p.z_from, p.z_from + p.z_hist.length);
+  const n = days.length;
+  chart($("hero-chart"), () => lines($("hero-chart"), days.map(ts), [{ label: `${p.a} vs ${p.b}`, data: p.z_hist, color: "--ink", width: 2.5 }], {
     yFmt: (v) => v.toFixed(1), height: 280,
     extra: [refLine(p.entry, n, css("--gold"), "+entry", [], 1.5), refLine(-p.entry, n, css("--gold"), "−entry", [], 1.5), refLine(0, n, css("--muted"), "0")],
   }));
@@ -205,6 +206,34 @@ function costs() {
   $("robust").innerHTML = head + `<tbody>${body}</tbody><caption>Robustness: the headline uses entry at ±${R.params.entry} and the stock-by-stock cost model; this table uses flat costs, taxes included. The other entry levels were run once, after the protocol was fixed, and are counted in the deflated Sharpe ratio.</caption>`;
 }
 
+function svgBars(el, edges, counts, color, label, fmt) {
+  const W = Math.max(el.clientWidth - 24, 260), H = 210, L = 40, B = 30, top = 34;
+  const max = Math.max(...counts, 1), bw = (W - L) / counts.length;
+  const y = (v) => top + (H - top - B) * (1 - v / max);
+  let svg = `<text x="0" y="14" class="title">${label}</text>`;
+  [0, 0.5, 1].forEach((f) => { svg += `<line x1="${L}" x2="${W}" y1="${y(max * f)}" y2="${y(max * f)}" stroke="var(--grid)"/><text x="${L - 6}" y="${y(max * f) + 4}" text-anchor="end">${Math.round(max * f)}</text>`; });
+  counts.forEach((c, i) => {
+    const h = y(0) - y(c);
+    svg += `<rect x="${L + i * bw + 1}" y="${y(c)}" width="${Math.max(bw - 2, 1)}" height="${h}" rx="${Math.min(2, bw / 4)}" fill="var(${color})"><title>${fmt(edges[i])} to ${fmt(edges[i + 1])}: ${c} trades</title></rect>`;
+  });
+  [0, Math.floor(counts.length / 2), counts.length].forEach((i, j) => { svg += `<text x="${L + i * bw}" y="${H - 10}" text-anchor="${["start", "middle", "end"][j]}">${fmt(edges[i])}</text>`; });
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${label}">${svg}</svg>`;
+}
+
+let anatKey = "distance";
+function anatomy() {
+  const f = $("anat-filter");
+  f.innerHTML = KEYS.map((k) => `<button type="button" data-k="${k}" aria-pressed="${k === anatKey}">${METHODS[k].label}</button>`).join("");
+  f.onclick = (e) => { const k = e.target.dataset.k; if (k) { anatKey = k; anatomy(); } };
+  const a = R.methods[anatKey].anatomy, color = METHODS[anatKey].color;
+  svgBars($("ret-hist"), a.ret_bins, a.ret_hist, color, "Return per trade", (v) => pct(v, 0));
+  svgBars($("day-hist"), a.day_bins, a.day_hist, color, "Days held", (v) => `${v}`);
+  const row = (l, g) => `<tr><th scope="row">${l}</th><td>${g.n}</td><td>${pct(g.win, 0)}</td><td>${signed(g.mean, 2)}</td></tr>`;
+  const head = (first) => `<thead><tr><th scope="col">${first}</th><th scope="col">Trades</th><th scope="col">Made money</th><th scope="col">Average</th></tr></thead>`;
+  $("anat-exit").innerHTML = head("How trades ended") + `<tbody>${row("Spread converged", a.converged)}${row("Six-month window ended", a.window_end)}</tbody><caption>Before costs. Trades that never converge carry the losses.</caption>`;
+  $("anat-sectors").innerHTML = head("Sector") + `<tbody>${Object.entries(a.sectors).sort((x, y) => y[1].n - x[1].n).map(([s, g]) => row(esc(s), g)).join("")}</tbody>`;
+}
+
 function trades() {
   const rows = [
     ["Trades a year", (t) => num(t.per_year, 0)],
@@ -220,7 +249,29 @@ function trades() {
   $("trade-table").innerHTML = head + `<tbody>${body}${turnover}</tbody><caption>Trades that never converge are closed when their six-month trading window ends. Trade returns are on the capital assigned to one pair.</caption>`;
 }
 
-let bookFilter = "all", bookAll = false;
+let bookFilter = "all", bookAll = false, explored = null;
+
+function explore(p) {
+  explored = p;
+  const days = R.recent_days.slice(p.z_from, p.z_from + p.z_hist.length);
+  const xs = days.map(ts), n = xs.length;
+  const [l, s] = p.side === 1 ? [p.a_name, p.b_name] : [p.b_name, p.a_name];
+  $("explorer-title").textContent = `${p.a_name} / ${p.b_name}`;
+  $("explorer-cap").textContent = `${METHODS[p.method].label}, ${p.sector}. Signal since the newest cohort holding the pair started on ${longDate(p.cohort)}; dots mark trades opened (gold) and closed (grey) in that window. Now long ${l}, short ${s}, ${signed(p.pnl)} so far.`;
+  const mark = (key) => xs.map((x, i) => (p.history.some((t) => t[key] === days[i]) ? p.z_hist[i] : null));
+  const dots = (data, color, label) => ({ label, stroke: color, fill: color, width: 0, data, paths: () => null, points: { show: true, size: 9, fill: color }, value: () => "" });
+  const build = () => lines($("explorer-chart"), xs, [{ label: "Signal", data: p.z_hist, color: "--ink", width: 2 }], {
+    yFmt: (v) => v.toFixed(1), height: 240,
+    extra: [refLine(p.entry, n, css("--gold"), "+entry", [], 1.5), refLine(-p.entry, n, css("--gold"), "−entry", [], 1.5), refLine(0, n, css("--muted"), "0"),
+      dots(mark("open"), css("--gold"), "opened"), dots(mark("close"), css("--muted"), "closed")],
+  });
+  const c = charts.find((c) => c.el.id === "explorer-chart");
+  if (c) { c.build = build; draw(c); } else chart($("explorer-chart"), build);
+  $("explorer-table").innerHTML = `<thead><tr><th scope="col">Opened</th><th scope="col">Closed</th><th scope="col" class="t-left">Position</th><th scope="col">Result</th><th scope="col" class="t-left">How it ended</th></tr></thead><tbody>` +
+    (p.history.length ? p.history.slice().reverse().map((t) => { const [a, b] = t.side === 1 ? [p.a_name, p.b_name] : [p.b_name, p.a_name]; return `<tr><td>${t.open}</td><td>${t.close}</td><td class="t-left">Long ${esc(a)}, short ${esc(b)}</td><td>${signed(t.pnl)}</td><td class="t-left">${t.converged ? "Spread converged" : "Window ended"}</td></tr>`; }).join("")
+      : `<tr><td colspan="5">No finished trade on this pair yet.</td></tr>`) +
+    `</tbody><caption>The pair's last ${p.history.length} finished trades by this method, across all cohorts, before costs.</caption>`;
+}
 function book() {
   const f = $("book-filter");
   f.innerHTML = [["all", "All"], ...KEYS.map((k) => [k, METHODS[k].label])].map(([k, l]) => `<button type="button" data-k="${k}" aria-pressed="${k === bookFilter}">${l}</button>`).join("");
@@ -230,10 +281,11 @@ function book() {
   $("book-more").hidden = all.length <= 15;
   $("book-more").textContent = bookAll ? "Show the 15 widest" : `Show all ${all.length}`;
   $("book-more").onclick = () => { bookAll = !bookAll; book(); };
+  $("book-table").onclick = (e) => { const i = e.target.dataset.pos; if (i != null) { explore(R.positions[+i]); book(); $("explorer-title").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }); } };
   const head = `<thead><tr><th scope="col">Position</th><th scope="col" class="t-left">Sector</th><th scope="col" class="t-left">Method</th><th scope="col">z now</th><th scope="col">Opened</th><th scope="col">Cohorts</th><th scope="col">P&amp;L so far</th></tr></thead>`;
   const body = rows.map((p) => {
     const [l, s] = p.side === 1 ? [p.a_name, p.b_name] : [p.b_name, p.a_name];
-    return `<tr><td>Long ${esc(l)}, short ${esc(s)}</td><td class="t-left">${esc(p.sector)}</td><td class="t-left"><span class="key" style="background:var(${METHODS[p.method].color})"></span>${METHODS[p.method].label}</td><td>${num(p.z, 2)}</td><td>${p.opened}</td><td>${p.cohorts}</td><td>${signed(p.pnl)}</td></tr>`;
+    return `<tr${p === explored ? ' aria-current="true"' : ""}><td><button type="button" class="link" data-pos="${R.positions.indexOf(p)}">Explore</button> Long ${esc(l)}, short ${esc(s)}</td><td class="t-left">${esc(p.sector)}</td><td class="t-left"><span class="key" style="background:var(${METHODS[p.method].color})"></span>${METHODS[p.method].label}</td><td>${num(p.z, 2)}</td><td>${p.opened}</td><td>${p.cohorts}</td><td>${signed(p.pnl)}</td></tr>`;
   }).join("");
   $("book-table").innerHTML = head + `<tbody>${body || `<tr><td colspan="7">No open position for this method today.</td></tr>`}</tbody><caption>${all.length} open pairs, sorted by how wide the spread is. "Cohorts" counts the monthly cohorts holding the same pair; the row shows the newest.</caption>`;
 }
@@ -335,7 +387,25 @@ function strip() {
 
 /* ---------- method page ---------- */
 
+// The abstract is assembled from the results, like the verdict, so it stays true as the data change.
+function abstract() {
+  const ms = KEYS.map((k) => R.methods[k]), label = (k) => METHODS[k].label;
+  const best = KEYS.reduce((a, b) => (R.methods[b].net.sharpe > R.methods[a].net.sharpe ? b : a));
+  const gross = ms.map((m) => m.gross.sharpe), passes = KEYS.filter((k) => R.methods[k].net.dsr >= 0.95);
+  const turnover = KEYS.map((k) => R.methods[k].turnover);
+  const out = [`This study tests ${["", "one", "two", "three", "four", "five", "six", "seven", "eight"][KEYS.length]} pair-trading methods on ${R.universe.length} large companies listed in euros, from ${longDate(R.start)} to ${longDate(R.data_end)}, under one protocol fixed in advance and with realistic frictions: stock-by-stock spreads, transaction taxes and short-selling bans.`];
+  out.push(gross.every((g) => g > 0) ? `Before costs every method makes money (Sharpe ratios ${num(Math.min(...gross))} to ${num(Math.max(...gross))}).` : `Before costs, Sharpe ratios range from ${num(Math.min(...gross))} to ${num(Math.max(...gross))}.`);
+  out.push(`After costs the best is ${label(best)}, with a Sharpe ratio of ${num(R.methods[best].net.sharpe)} (95% interval ${num(R.methods[best].ci.sharpe[0])} to ${num(R.methods[best].ci.sharpe[1])}), and ${passes.length ? `${passes.map(label).join(", ")} pass` : "none passes"} the deflated Sharpe test across ${R.params.trials} variants.`);
+  const rev = ms.filter((m) => m.factors.t.REV >= 2).length, tmax = Math.max(...ms.map((m) => m.factors.alpha_t));
+  out.push(`${rev === ms.length ? "Every method's" : `${rev} methods'`} returns load significantly on short-term reversal, and ${tmax < 2 ? "no method has a significantly positive alpha once the factors are accounted for" : "at least one method keeps a positive alpha after the factors"}.`);
+  out.push(`Turnover ranges from ${num(Math.min(...turnover), 0)} to ${num(Math.max(...turnover), 0)} times capital a year, so costs, more than the quality of the signal, decide the result.`);
+  return out.join(" ");
+}
+
 function methodPage() {
+  $("abstract").textContent = abstract();
+  const url = location.origin + location.pathname.replace(/method\.html$/, "");
+  $("cite").textContent = `Nguyen, N. M. (${R.data_end.slice(0, 4)}). Euro Pairs: an open study of pair trading on euro-area stocks (model version ${R.live.version}, data to ${R.data_end}). ${url}`;
   document.querySelectorAll("[data-k]").forEach((el) => {
     const v = el.dataset.k.split(".").reduce((o, k) => o?.[k], R);
     if (v != null) el.textContent = el.dataset.fmt === "pct" ? pct(v, 1) : el.dataset.fmt === "bps" ? `${num(v * 1e4, 0)} bps` : Array.isArray(v) ? v.join(" / ") : v;
@@ -363,7 +433,8 @@ fetch("data/results.json")
     R = data;
     $("stamp") && ($("stamp").textContent = `Prices to ${longDate(R.data_end)} close. Rebuilt ${R.generated.replace("T", " ").replace("+00:00", " UTC")} by a scheduled job after each European trading day.`);
     if ($("summary")) {
-      hero(); summary(); liveRecord(); evidence(); equity(); risk(); yearly(); costs(); trades(); book();
+      hero(); summary(); liveRecord(); evidence(); equity(); risk(); yearly(); costs(); trades(); anatomy(); book(); if (R.positions.length) { explore(R.positions[0]); book(); }
+      chart($("work-chart"), () => lines($("work-chart"), R.dates.map(ts), KEYS.map((k) => ({ label: METHODS[k].label, data: R.methods[k].at_work, color: METHODS[k].color })), { yFmt: (v) => pct(v, 0), height: 240 }));
       document.querySelectorAll("[data-cost]").forEach((b) => b.addEventListener("click", () => {
         costMode = b.dataset.cost;
         document.querySelectorAll("[data-cost]").forEach((x) => x.setAttribute("aria-pressed", x === b));

@@ -199,3 +199,20 @@ def test_pca_selects_the_mean_reverting_stock():
     lp = pd.DataFrame(np.cumsum(r, axis=0), columns=[f"S{i}" for i in range(n)])
     sel = strategy.select_pca(lp, 1, 3)
     assert sel and sel[0]["a"] == "S0"
+
+
+def test_pca_daily_signals_have_no_look_ahead():
+    rng = np.random.default_rng(9)
+    n, t = 10, 400
+    lp = pd.DataFrame(np.cumsum(rng.normal(0, 0.01, (t, n)), axis=0), columns=[f"S{i}" for i in range(n)])
+    s, end = 300, 360
+    sel = strategy.select_pca(lp.iloc[s - 252:s], 2, 3)
+    assert sel
+    first = [dict(p) for p in sel]
+    strategy.pca_signals(first, lp, s, end)
+    later = lp.copy()
+    later.iloc[s + 30:] += rng.normal(0, 0.05, (t - s - 30, n)).cumsum(0)  # rewrite the future after day 30
+    second = [dict(p) for p in sel]
+    strategy.pca_signals(second, later, s, end)
+    for a, b in zip(first, second):
+        assert np.allclose(a["z"][:30], b["z"][:30]) and np.allclose(a["hedge"][:30], b["hedge"][:30])

@@ -101,6 +101,19 @@
 <section id="trades"><div class="wrap">
   <h2>How the trades behave</h2>
   <div class="scroll"><table id="trade-table"></table></div>
+  <h3>Capital at work</h3>
+  <figure><div class="panel"><div class="chart" id="work-chart" role="img" aria-label="Share of capital in open trades, by method"></div></div>
+  <figcaption>Value of open positions (average of the long and short sides) as a share of each method's capital, five-day average. It can pass 100% when the stocks held have risen since the trades opened. Low returns on idle capital and low returns on busy capital are different problems.</figcaption></figure>
+  <h3>Anatomy of a trade</h3>
+  <div class="toggle" role="group" aria-label="Method" id="anat-filter"></div>
+  <div class="grid2">
+    <figure><div class="panel bars" id="ret-hist"></div><figcaption>Return per trade on the pair's capital, before costs (ends grouped at ±20%).</figcaption></figure>
+    <figure><div class="panel bars" id="day-hist"></div><figcaption>How long trades are held, in trading days (weeks of 7).</figcaption></figure>
+  </div>
+  <div class="grid2">
+    <div class="scroll"><table id="anat-exit"></table></div>
+    <div class="scroll"><table id="anat-sectors"></table></div>
+  </div>
 </div></section>
 
 <section id="book"><div class="wrap">
@@ -109,11 +122,16 @@
   <div class="toggle" role="group" aria-label="Filter by method" id="book-filter"></div>
   <div class="scroll"><table id="book-table"></table></div>
   <div class="toggle"><button type="button" id="book-more" hidden></button></div>
+  <h3 id="explorer-title">Pair explorer</h3>
+  <p class="note">Choose "Explore" on any row to see that pair's spread and its past trades.</p>
+  <figure><div class="panel"><div class="chart" id="explorer-chart" role="img" aria-labelledby="explorer-cap"></div></div><figcaption id="explorer-cap"></figcaption></figure>
+  <div class="scroll"><table id="explorer-table"></table></div>
 </div></section>
 </main>
 
 <footer><div class="wrap">
   <p id="stamp"></p>
+  <p>Download the data: <a href="data/returns.csv">daily returns</a> (CSV), <a href="data/trades.csv">every trade</a> (CSV), <a href="data/results.json">all results</a> (JSON). How to cite: see the <a href="method.html#cite">method page</a>.</p>
   <p>Prices from Yahoo Finance; only derived results are published. Code under the MIT licence; results free to reuse with credit. This is research, not investment advice: past results, especially backtested ones, do not predict future returns.</p>
 </div></footer>
 
