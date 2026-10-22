@@ -1,0 +1,13 @@
+country,scope,start,end,note
+IT,financials,2008-09-22,2009-05-31,"Consob: sales of bank and insurance shares had to be backed by ownership, not just borrowed stock; relaxed to availability from 1 June 2009"
+NL,financials,2008-10-06,2009-05-31,"AFM ban on short positions in financial stocks; start date approximate (sources give 22 Sept or 5 Oct 2008)"
+FR,financials,2011-08-12,2012-02-11,AMF ban on creating or increasing net short positions in financial stocks
+BE,financials,2011-08-12,2012-02-12,FSMA ban on covered short selling of financial stocks
+ES,financials,2011-08-12,2012-02-15,CNMV ban on net short positions in financial stocks
+IT,financials,2011-08-12,2012-02-24,Consob ban on net short positions in bank and insurance shares
+ES,all,2012-07-23,2013-01-31,CNMV ban on net short positions in all Spanish shares
+FR,all,2020-03-17,2020-05-18,AMF ban on net short positions during the Covid crash
+ES,all,2020-03-17,2020-05-18,CNMV ban on net short positions during the Covid crash
+IT,all,2020-03-18,2020-05-18,Consob ban; ended early with the others
+BE,all,2020-03-18,2020-05-18,FSMA ban on net short positions
+AT,all,2020-03-18,2020-05-18,FMA ban on net short positions

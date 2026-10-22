@@ -109,6 +109,9 @@ td.heat { color: var(--ink); }
 .prose li { margin-bottom: 6px; }
 .formula { font-family: var(--serif); font-style: italic; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 10px 14px; margin: 10px 0 14px; overflow-x: auto; }
 .refs li { margin-bottom: 10px; }
+/* tables break out of the prose column to the page width */
+.prose > .scroll { width: min(1048px, calc(100vw - 32px)); font: 0.95rem/1.5 var(--sans); }
+.prose > .scroll td.t-left { min-width: 28ch; }
 
 footer { border-top: 1px solid var(--rule); margin-top: 56px; padding: 22px 0 40px; color: var(--muted); font-size: 0.875rem; }
 footer p { max-width: 80ch; }

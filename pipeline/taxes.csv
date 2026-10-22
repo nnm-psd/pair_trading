@@ -1,0 +1,9 @@
+country,start,end,rate,note
+FR,2012-08-01,2016-12-31,0.002,taxe sur les transactions financières: purchases of French companies over €1bn market cap
+FR,2017-01-01,2025-03-31,0.003,raised by the 2017 finance law
+FR,2025-04-01,,0.004,raised by the 2025 finance law (art. 98)
+IT,2013-03-01,2013-12-31,0.0012,imposta sulle transazioni finanziarie: on-exchange rate in its first year
+IT,2014-01-01,2025-12-31,0.001,on-exchange rate
+IT,2026-01-01,,0.002,doubled by the 2026 budget law
+ES,2021-01-16,,0.002,impuesto sobre las transacciones financieras: Spanish companies over €1bn market cap
+IE,2003-01-01,,0.01,stamp duty on purchases of Irish shares

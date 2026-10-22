@@ -16,9 +16,11 @@ BLOCK = 63  # bootstrap block length: a quarter, longer than the memory left by 
 HAC = {"cov_type": "HAC", "cov_kwds": {"maxlags": 10}}
 
 
-def net(df: pd.DataFrame, cost_bps: float) -> pd.Series:
-    """Daily excess return after trading costs (bps of notional traded, per leg and side) and the borrow fee."""
-    return df.pnl - cost_bps / 1e4 * df.traded - BORROW / A * df.short
+def net(df: pd.DataFrame, cost_bps: float | None = None) -> pd.Series:
+    """Daily excess return after costs. cost_bps=None: the realistic model (stock-by-stock half-spread plus
+    commission); a number: a flat cost per leg and side instead. Taxes and the borrow fee are always charged."""
+    trading = df.spread if cost_bps is None else cost_bps / 1e4 * df.traded
+    return df.pnl - trading - df.tax - BORROW / A * df.short
 
 
 def psr(r: pd.Series, sr0: float = 0.0) -> float:

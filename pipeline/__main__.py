@@ -13,11 +13,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from . import data, factors, stats, strategy
+from . import costs, data, factors, stats, strategy
 from .strategy import BASE, ENTRIES, METHODS
 
 OUT = Path(__file__).parents[1] / "site" / "data" / "results.json"
-BASE_COST = 10  # bps per leg and side: commission + half-spread + impact for liquid euro large caps
+BASE_COST = None  # the realistic cost model in costs.py; COSTS below are flat alternatives
+CAPACITY_ADV = 0.1  # a trade may take at most this share of a stock's daily volume
 COSTS = (0, 5, 10, 20, 30)
 
 
@@ -80,14 +81,29 @@ def live_summary(track: pd.DataFrame, nets: dict) -> dict:
     return out
 
 
+def capacity(t: pd.DataFrame, adv: pd.DataFrame) -> dict:
+    """Largest portfolio (EUR) at which 95% of the past three years' trades stay within CAPACITY_ADV of each stock's
+    average daily traded value. Each pair gets 1/(pairs x 6 overlapping cohorts) of the capital, split by beta."""
+    t = t[t.open >= t.open.max() - pd.DateOffset(years=3)]
+    share = 1 / (BASE[1] * strategy.TRADE / 21)
+    leg_a = 2 / (1 + t.beta) * share
+    leg_b = 2 * t.beta / (1 + t.beta) * share
+    adv_a = np.array([adv.at[d, a] for d, a in zip(t.open, t.a)])
+    adv_b = np.array([adv.at[d, b] for d, b in zip(t.open, t.b)])
+    limit = np.minimum(CAPACITY_ADV * adv_a / leg_a, CAPACITY_ADV * adv_b / leg_b)
+    return {"aum": r4(np.nanpercentile(limit, 5)), "median_trade": r4(np.nanmedian(limit))}
+
+
 def main() -> None:
     t0 = time.time()
     cached = "--cached" in sys.argv
     px = data.load(cached=cached)
     sectors = data.UNIVERSE.sector
-    out, trades, live, n_selected = strategy.run(px, sectors)
+    fr = costs.frictions(px)
+    out, trades, live, n_selected = strategy.run(px, sectors, fr)
     print(f"backtest done in {time.time() - t0:.0f}s ({len(out)} variants)")
 
+    adv = costs.adv(px, data.volume(px))
     base = {m: out[(m, *BASE)] for m in METHODS}
     idx = base[METHODS[0]].index
     rf = factors.risk_free(idx, cached)
@@ -119,6 +135,10 @@ def main() -> None:
                 "pairs_per_cohort": r4(n_selected[m]),
             },
             "turnover": r4(base[m].traded.mean() * 252),
+            "cost_breakdown": rd({"gross": base[m].pnl.mean() * 252, "spread": base[m].spread.mean() * 252,
+                                  "tax": base[m].tax.mean() * 252, "borrow": stats.BORROW * base[m].short.mean(),
+                                  "cost_per_side": base[m].spread.sum() / base[m].traded.sum()}),
+            "capacity": capacity(t, adv),
             "equity": weekly((1 + r + rf).cumprod()),
             "equity_gross": weekly((1 + g + rf).cumprod()),
             "drawdown": weekly(stats.drawdown(r + rf)),
@@ -156,12 +176,19 @@ def main() -> None:
         "data_end": last.date().isoformat(),
         "start": idx[0].date().isoformat(),
         "params": {"formation_days": BASE[0], "trading_days": strategy.TRADE, "pairs": BASE[1], "entry": BASE[2],
-                   "exit": strategy.EXIT, "cost_bps": BASE_COST, "borrow": stats.BORROW, "p_max": strategy.P_MAX,
+                   "exit": strategy.EXIT, "commission": costs.COMMISSION, "half_spread_calm": costs.HALF_SPREAD_CALM,
+                   "capacity_adv": CAPACITY_ADV, "borrow": stats.BORROW, "p_max": strategy.P_MAX,
                    "kalman_delta": strategy.KALMAN_DELTA, "costs": list(COSTS), "entries": list(ENTRIES),
                    "forms": list(strategy.FORMS), "ns": list(strategy.NS), "trials": len(trial_srs),
                    "block": stats.BLOCK, "factor_end": F.index[-1].date().isoformat(),
                    "rf": r4(rf.mean() * 252)},
-        "universe": [{"ticker": t, "name": names[t], "sector": sectors[t]} for t in px.columns],
+        "universe": [{"ticker": t, "name": names[t], "sector": sectors[t], "country": data.UNIVERSE.country[t]}
+                     for t in px.columns],
+        "taxes": [{"country": t.country, "start": t.start.date().isoformat(),
+                   "end": None if pd.isna(t.end) else t.end.date().isoformat(), "rate": t.rate, "note": t.note}
+                  for t in costs.TAXES.itertuples()],
+        "bans": [{"country": b.country, "scope": b.scope, "start": b.start.date().isoformat(),
+                  "end": b.end.date().isoformat(), "note": b.note} for b in costs.BANS.itertuples()],
         "corrections": [{"ticker": c.ticker, "name": names[c.ticker], "date": c.date.date().isoformat(),
                          "end": None if pd.isna(c.end) else c.end.date().isoformat(), "reason": c.reason}
                         for c in data.CORRECTIONS.itertuples()],

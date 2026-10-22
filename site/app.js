@@ -108,7 +108,7 @@ function summary() {
   const bm = R.methods[best].net;
   const mk = R.benchmark.summary;
   const years = (Date.parse(R.data_end) - Date.parse(R.start)) / 3.156e10;
-  $("intro").textContent = `${R.universe.length} large caps listed in euros, ${R.candidate_pairs} same-sector pairs, ${R.cohorts} monthly cohorts and ${years.toFixed(0)} years of out-of-sample trading since ${longDate(R.start)}. Every figure is after ${R.params.cost_bps} bps per leg and side and a ${pct(R.params.borrow, 1)} borrow fee, unless marked otherwise.`;
+  $("intro").textContent = `${R.universe.length} large caps listed in euros, ${R.candidate_pairs} same-sector pairs, ${R.cohorts} monthly cohorts and ${years.toFixed(0)} years of out-of-sample trading since ${longDate(R.start)}. Every figure is after costs: bid-ask spreads and commission stock by stock, transaction taxes, a ${pct(R.params.borrow, 1)} borrow fee, and no new shorts during regulators' short-selling bans.`;
   $("verdict-text").textContent = verdict(best);
 
   const ci = (c) => `${num(c[0])} to ${num(c[1])}`;
@@ -179,15 +179,23 @@ function costs() {
     }
     return [k, pts.at(-1).sharpe > 0 ? Infinity : 0];
   });
-  $("costs-text").textContent = `Pair trading turns its book over many times a year, so cost is the whole game. ` +
-    be.map(([k, b]) => `${METHODS[k].label} stops making money at ${b === Infinity ? `more than ${c.at(-1)}` : `about ${b.toFixed(0)}`} bps`).join("; ") +
+  $("costs-text").textContent = `Pair trading turns its book over many times a year, so cost is the whole game. The headline charges each stock its own spread, wider when markets are stressed, which averaged ${KEYS.map((k) => num(R.methods[k].cost_breakdown.cost_per_side * 1e4, 0)).join(", ")} bps per side for the three methods. On a flat cost instead (taxes still charged), ` +
+    be.map(([k, b]) => `${METHODS[k].label} stops making money at ${b === Infinity ? `more than ${c.at(-1)}` : b === 0 ? "any cost" : `about ${b.toFixed(0)}`} bps`).join("; ") +
     `. A large institution pays perhaps 3–8 bps on these stocks; a retail broker often 15–30.`;
+  const rows = [
+    ["Profit before costs", (b) => b.gross, 1], ["Spreads and commission", (b) => b.spread, -1], ["Transaction taxes", (b) => b.tax, -1], ["Borrowing stock to sell short", (b) => b.borrow, -1],
+  ];
+  $("breakdown").innerHTML = `<thead><tr><th scope="col">A year, % of capital</th>${KEYS.map((k) => `<th scope="col">${METHODS[k].label}</th>`).join("")}</tr></thead><tbody>` +
+    rows.map(([l, f, sign]) => `<tr><th scope="row">${l}</th>${KEYS.map((k) => `<td>${signed(sign * f(R.methods[k].cost_breakdown), 2)}</td>`).join("")}</tr>`).join("") +
+    `<tr><th scope="row"><b>Left above cash</b></th>${KEYS.map((k) => { const b = R.methods[k].cost_breakdown; return `<td class="best">${signed(b.gross - b.spread - b.tax - b.borrow, 2)}</td>`; }).join("")}</tr>` +
+    `<tr><th scope="row">Largest portfolio the trades fit <span class="sub">see caption</span></th>${KEYS.map((k) => `<td>€${num(R.methods[k].capacity.aum / 1e6, 0)}m</td>`).join("")}</tr>` +
+    `</tbody><caption>Averages over the whole period (simple sums, so they differ slightly from compound growth). Taxes: France 0.2–0.4% and Italy 0.1–0.2% on purchases since 2012–13, Spain 0.2% since 2021, Irish stamp duty 1%. Capacity: the portfolio size at which 95% of the last three years' trades stay within ${pct(R.params.capacity_adv, 0)} of each stock's average daily trading on its home exchange.</caption>`;
   chart($("cost-chart"), () => lines($("cost-chart"), c, KEYS.map((k) => ({ label: METHODS[k].label, data: R.methods[k].costs.map((p) => p.sharpe), color: METHODS[k].color })), {
     yFmt: (v) => v.toFixed(1), height: 260, time: false, points: true, extra: [refLine(0, c.length, css("--muted"), "0")],
   }));
   const head = `<thead><tr><th scope="col">Sharpe ratio<br><span class="sub">entry at ± z, cost in bps</span></th>${c.map((b) => `<th scope="col">${b}</th>`).join("")}</tr></thead>`;
   const body = KEYS.map((k) => R.methods[k].entries.map((e, i) => `<tr><th scope="row">${i === 0 ? METHODS[k].label : ""} <span class="sub">${e.entry.toFixed(1)}</span></th>${e.sharpe.map((s) => `<td class="heat" style="${heat(s / 10)}">${num(s)}</td>`).join("")}</tr>`).join("")).join("");
-  $("robust").innerHTML = head + `<tbody>${body}</tbody><caption>Robustness: the headline uses entry at ±${R.params.entry} and ${R.params.cost_bps} bps. The other entry levels were run once, after the protocol was fixed, and are counted in the deflated Sharpe ratio.</caption>`;
+  $("robust").innerHTML = head + `<tbody>${body}</tbody><caption>Robustness: the headline uses entry at ±${R.params.entry} and the stock-by-stock cost model; this table uses flat costs, taxes included. The other entry levels were run once, after the protocol was fixed, and are counted in the deflated Sharpe ratio.</caption>`;
 }
 
 function trades() {
@@ -294,12 +302,17 @@ function strip() {
 function methodPage() {
   document.querySelectorAll("[data-k]").forEach((el) => {
     const v = el.dataset.k.split(".").reduce((o, k) => o?.[k], R);
-    if (v != null) el.textContent = el.dataset.fmt === "pct" ? pct(v, 1) : Array.isArray(v) ? v.join(" / ") : v;
+    if (v != null) el.textContent = el.dataset.fmt === "pct" ? pct(v, 1) : el.dataset.fmt === "bps" ? `${num(v * 1e4, 0)} bps` : Array.isArray(v) ? v.join(" / ") : v;
   });
   const bySector = {};
   R.universe.forEach((s) => (bySector[s.sector] ||= []).push(s));
   $("universe").innerHTML = `<thead><tr><th scope="col">Sector</th><th scope="col" class="t-left">Stocks</th></tr></thead><tbody>` +
     Object.entries(bySector).map(([sec, ss]) => `<tr><th scope="row">${esc(sec)} <span class="sub">${ss.length}</span></th><td class="t-left" style="white-space:normal">${ss.map((s) => `${esc(s.name)} <span class="sub">${s.ticker}</span>`).join(", ")}</td></tr>`).join("") + "</tbody>";
+  const COUNTRY = { FR: "France", IT: "Italy", ES: "Spain", IE: "Ireland", BE: "Belgium", NL: "Netherlands", AT: "Austria" };
+  $("taxes").innerHTML = `<thead><tr><th scope="col">Country</th><th scope="col">From</th><th scope="col">To</th><th scope="col">Rate on purchases</th><th scope="col" class="t-left">Note</th></tr></thead><tbody>` +
+    R.taxes.map((t) => `<tr><td>${COUNTRY[t.country]}</td><td>${t.start}</td><td>${t.end || "today"}</td><td>${pct(t.rate, 2)}</td><td class="t-left" style="white-space:normal">${esc(t.note)}</td></tr>`).join("") + "</tbody>";
+  $("bans").innerHTML = `<thead><tr><th scope="col">Country</th><th scope="col" class="t-left">Stocks</th><th scope="col">From</th><th scope="col">To</th><th scope="col" class="t-left">Note</th></tr></thead><tbody>` +
+    R.bans.map((b) => `<tr><td>${COUNTRY[b.country]}</td><td class="t-left">${b.scope === "all" ? "All" : "Banks, insurers"}</td><td>${b.start}</td><td>${b.end}</td><td class="t-left" style="white-space:normal">${esc(b.note)}</td></tr>`).join("") + "</tbody>";
   $("corrections").innerHTML = `<thead><tr><th scope="col">Stock</th><th scope="col">Date</th><th scope="col" class="t-left">What was wrong</th></tr></thead><tbody>` +
     R.corrections.map((c) => `<tr><td>${esc(c.name)} <span class="sub">${c.ticker}</span></td><td>${c.date}${c.end ? ` to ${c.end}` : ""}</td><td class="t-left" style="white-space:normal">${esc(c.reason)}</td></tr>`).join("") + "</tbody>";
 }

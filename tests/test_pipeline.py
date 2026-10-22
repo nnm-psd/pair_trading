@@ -81,7 +81,9 @@ def test_stats_on_known_returns():
     assert abs(s["sharpe"] - 0.0004 / 0.01 * np.sqrt(252)) < 0.25
     assert s["psr"] > 0.95 and -1 < s["max_dd"] < 0
     assert stats.dsr(r, [0.04, 0.0, 0.01, -0.01]) < stats.psr(r)
-    assert stats.net(pd.DataFrame({"pnl": [0.01], "traded": [2.0], "short": [0.0]}), 10).iloc[0] == 0.01 - 0.002
+    day = pd.DataFrame({"pnl": [0.01], "traded": [2.0], "short": [0.0], "tax": [0.003], "spread": [0.0014]})
+    assert np.isclose(stats.net(day, 10).iloc[0], 0.01 - 0.002 - 0.003)  # flat cost + tax
+    assert np.isclose(stats.net(day).iloc[0], 0.01 - 0.0014 - 0.003)  # realistic cost + tax
 
 
 def test_pbo_separates_luck_from_skill():
@@ -130,3 +132,16 @@ def test_live_record_is_append_only(tmp_path, monkeypatch):
     revised = {"kalman": pd.Series(-0.5, index=idx[:8])}  # history rewritten by a later backtest
     track = main.record_live(revised, rf)
     assert len(track) == 4 and track.excess.iloc[0] == 0.001  # old row untouched, three new days appended
+
+
+def test_frictions_charge_tax_on_purchases_and_respect_bans():
+    n = 6
+    z = np.array([0, 3, 3, 1, -1, 0.0])  # rich spread: short a, long b; converges on day 4
+    one = np.ones(n)
+    fr = (one * 1e-3, one * 1e-3, one * 0.003, np.zeros(n), np.zeros(n, bool), np.zeros(n, bool))
+    r = strategy.simulate(np.full(n, 10.0), np.full(n, 10.0), z, one, 2.0, True, fr)
+    assert np.isclose(r.tax[2], 0) and np.isclose(r.tax[5], 0.003)  # a is sold at entry, bought back at exit: taxed
+    assert np.isclose(r.spread[2], 2e-3) and np.isclose(r.spread[5], 2e-3)
+    banned = (*fr[:4], np.array([0, 0, 1, 1, 0, 0], bool), np.zeros(n, bool))
+    r = strategy.simulate(np.full(n, 10.0), np.full(n, 10.0), z, one, 2.0, True, banned)
+    assert r.traded[2] == 0 and r.traded[3] == 0  # cannot short a while it is banned

@@ -5,20 +5,23 @@ import pandas as pd
 
 UNIVERSE = pd.read_csv(Path(__file__).with_name("universe.csv")).set_index("ticker")
 CORRECTIONS = pd.read_csv(Path(__file__).with_name("corrections.csv"), parse_dates=["date", "end"])
-CACHE =Path(__file__).parents[1] / "data" / "prices.csv.gz"
+CACHE = Path(__file__).parents[1] / "data" / "prices.csv.gz"
+VOLUME = CACHE.with_name("volume.csv.gz")
 START = "2003-01-01"
 
 
 def download() -> pd.DataFrame:
     import yfinance as yf
 
-    px = yf.download(list(UNIVERSE.index), start=START, auto_adjust=True, progress=False, threads=True)["Close"]
+    raw = yf.download(list(UNIVERSE.index), start=START, auto_adjust=True, progress=False, threads=True)
+    px = raw["Close"]
     missing = sorted(set(UNIVERSE.index) - set(px.columns[px.notna().any()]))
     # A few missing tickers are survivable; a broken feed is not, so fail loudly and keep yesterday's site.
     if len(missing) > 0.1 * len(UNIVERSE):
         raise RuntimeError(f"Yahoo returned no data for {len(missing)} tickers: {missing}")
     CACHE.parent.mkdir(exist_ok=True)
     px.to_csv(CACHE)
+    raw["Volume"].to_csv(VOLUME)
     return px
 
 
@@ -49,6 +52,11 @@ def clean(px: pd.DataFrame) -> pd.DataFrame:
             before = px.index < c.date
             px.loc[before, c.ticker] *= px.at[c.date, c.ticker] / px.loc[before, c.ticker].dropna().iloc[-1]
     return px.ffill(limit=5)
+
+
+def volume(px: pd.DataFrame) -> pd.DataFrame:
+    """Shares traded per day, aligned to the cleaned prices. Read after load(), which writes the file."""
+    return pd.read_csv(VOLUME, index_col=0, parse_dates=True).reindex(index=px.index, columns=px.columns)
 
 
 def load(cached: bool = False) -> pd.DataFrame:

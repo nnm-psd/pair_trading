@@ -23,7 +23,7 @@ MODEL_VERSION = "1.0"  # bump whenever the headline model changes; the live reco
 TRADE = 126
 FORMS, NS, ENTRIES = (126, 252, 378), (10, 20, 40), (1.5, 2.0, 2.5)
 BASE = (252, 20, 2.0)  # (formation days, pairs, entry z)
-FIELDS = ("pnl", "traded", "short")
+FIELDS = ("pnl", "traded", "short", "tax", "spread")
 EXIT = 0.0
 P_MAX = 0.05  # Engle-Granger p-value cut-off
 KALMAN_DELTA = 1e-5  # state noise of the Kalman hedge ratio, on log prices rebased to 0 at formation start
@@ -121,32 +121,49 @@ def signals(method: str, pair: dict, form: pd.DataFrame, trade_px: pd.DataFrame)
 @dataclass
 class PairResult:
     pnl: np.ndarray  # gross P&L per day, per unit of capital
-    traded: np.ndarray  # notional traded per day (costs scale with it)
+    traded: np.ndarray  # notional traded per day (flat per-side costs scale with it)
     short: np.ndarray  # short notional held per day (borrow fee scales with it)
+    tax: np.ndarray  # transaction tax paid per day (on purchases)
+    spread: np.ndarray  # half-spread and commission paid per day, stock by stock
     trades: list = field(default_factory=list)
     open: dict | None = None  # the position still open on the last day of an unfinished period
 
 
-def simulate(pa: np.ndarray, pb: np.ndarray, z: np.ndarray, beta: np.ndarray, entry: float, final: bool) -> PairResult:
+def simulate(pa: np.ndarray, pb: np.ndarray, z: np.ndarray, beta: np.ndarray, entry: float, final: bool,
+             fr: tuple | None = None) -> PairResult:
+    """fr: per-day arrays for the two stocks (cost per side a, b; purchase tax a, b; short ban a, b).
+    Without it, trading is free and unrestricted (P&L before costs)."""
     n = len(z)
-    res = PairResult(np.zeros(n), np.zeros(n), np.zeros(n))
+    if fr is None:
+        fr = (np.zeros(n),) * 4 + (np.zeros(n, bool),) * 2
+    cost_a, cost_b, tax_a, tax_b, ban_a, ban_b = fr
+    res = PairResult(*(np.zeros(n) for _ in FIELDS))
     want = pos = 0  # desired position decided at the close; actual position held
     sa = sb = 0.0  # shares of a and b
     b_sig = 1.0
     opened = None
+
+    def book(t, da, db):  # buy (+) or sell (-) da shares of a and db shares of b at t's close
+        va, vb = abs(da) * pa[t], abs(db) * pb[t]
+        res.traded[t] += va + vb
+        res.spread[t] += va * cost_a[t] + vb * cost_b[t]
+        res.tax[t] += (da > 0) * va * tax_a[t] + (db > 0) * vb * tax_b[t]
+
     for t in range(n):
         if t:
             res.pnl[t] = sa * (pa[t] - pa[t - 1]) + sb * (pb[t] - pb[t - 1])
         order = 0 if (final and t == n - 1) else want
+        if order and not pos and (ban_a[t] if order == -1 else ban_b[t]):
+            order = 0  # the leg to sell short is under a ban: wait, the signal may still be there when it lifts
         if order != pos:
             if pos:
-                res.traded[t] += abs(sa) * pa[t] + abs(sb) * pb[t]
-                res.trades.append({"open": opened, "close": t, "side": pos,
+                book(t, -sa, -sb)
+                res.trades.append({"open": opened, "close": t, "side": pos, "beta": float(b_sig),
                                    "pnl": float(res.pnl[opened + 1:t + 1].sum()), "converged": order == 0 and want == 0})
                 sa = sb = 0.0
             if order:
                 sa, sb = order * 2 / (1 + b_sig) / pa[t], -order * 2 * b_sig / (1 + b_sig) / pb[t]
-                res.traded[t] += 2.0
+                book(t, sa, sb)
                 opened = t
             pos = order
         res.short[t] = max(-sa * pa[t], 0) + max(-sb * pb[t], 0)
@@ -172,12 +189,12 @@ def variants() -> list[tuple]:
     return [(m, f, n, e) for m in METHODS for f in FORMS for n in NS for e in ENTRIES]
 
 
-_PX = _PAIRS = None
+_PX = _PAIRS = _FR = None
 
 
-def _init(px: pd.DataFrame, pairs: list) -> None:
-    global _PX, _PAIRS
-    _PX, _PAIRS = px, pairs
+def _init(px: pd.DataFrame, pairs: list, fr: dict) -> None:
+    global _PX, _PAIRS, _FR
+    _PX, _PAIRS, _FR = px, pairs, fr
 
 
 def _cohort(s: int):
@@ -196,17 +213,19 @@ def _cohort(s: int):
         for m in METHODS:
             n_selected[(m, f)] = len(chosen[m])
             legs = [(trade_px[p["a"]].to_numpy(), trade_px[p["b"]].to_numpy()) for p in chosen[m]]
+            frs = [tuple(_FR[k][p[leg]].to_numpy()[s:end] for k in ("spread", "tax", "ban") for leg in ("a", "b"))
+                   for p in chosen[m]]
             sig = [signals(m, p, form, trade_px) for p in chosen[m]]
             for e in ENTRIES:
                 acc = np.zeros((len(FIELDS), max(NS) + 1, end - s))
-                for i, (pair, (pa, pb), (z, beta)) in enumerate(zip(chosen[m], legs, sig)):
-                    r = simulate(pa, pb, z, beta, e, final)
-                    acc[:, i + 1] = r.pnl, r.traded, r.short
+                for i, (pair, (pa, pb), (z, beta), fr) in enumerate(zip(chosen[m], legs, sig, frs)):
+                    r = simulate(pa, pb, z, beta, e, final, fr)
+                    acc[:, i + 1] = [getattr(r, f) for f in FIELDS]
                     if (f, e) != (BASE[0], BASE[2]) or i >= BASE[1]:
                         continue
                     trades += [{"method": m, "a": pair["a"], "b": pair["b"], "cohort": dates[0],
                                 "open": dates[t["open"]], "close": dates[t["close"]], "days": t["close"] - t["open"],
-                                "side": t["side"], "pnl": t["pnl"], "converged": t["converged"]} for t in r.trades]
+                                "side": t["side"], "beta": t["beta"], "pnl": t["pnl"], "converged": t["converged"]} for t in r.trades]
                     if r.open:
                         o = r.open
                         live.append({"method": m, "a": pair["a"], "b": pair["b"], "cohort": dates[0],
@@ -218,7 +237,7 @@ def _cohort(s: int):
     return s, end, out, trades, live, n_selected
 
 
-def run(px: pd.DataFrame, sectors: pd.Series):
+def run(px: pd.DataFrame, sectors: pd.Series, fr: dict):
     """Run every cohort for every variant, in parallel. Returns {variant: daily DataFrame of FIELDS}, the trades
     and still-open positions of the BASE variant, and the mean number of pairs found per cohort."""
     pairs_all = candidate_pairs(sectors[sectors.index.isin(px.columns)])
@@ -226,7 +245,7 @@ def run(px: pd.DataFrame, sectors: pd.Series):
     acc = {k: np.zeros((len(FIELDS), n)) for k in variants()}
     active = np.zeros(n)
     trades, live, n_selected = [], [], {}
-    with ProcessPoolExecutor(os.cpu_count(), initializer=_init, initargs=(px, pairs_all)) as ex:
+    with ProcessPoolExecutor(os.cpu_count(), initializer=_init, initargs=(px, pairs_all, fr)) as ex:
         for s, end, out, tr, lv, ns in ex.map(_cohort, cohort_starts(px.index), chunksize=4):
             active[s:end] += 1
             for k, v in out.items():

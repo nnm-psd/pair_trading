@@ -44,8 +44,16 @@
     <li><b>Entry and exit.</b> Open when the z-score goes beyond ±<span data-k="params.entry">…</span>: sell the expensive stock and buy the cheap one. Close when the z-score crosses <span data-k="params.exit">…</span>. Anything still open when the six months end is closed then, win or lose.</li>
     <li><b>Execution.</b> A signal seen at one day's close is traded at the next day's close. This removes the bid-ask bounce that flatters same-day execution.</li>
     <li><b>Sizing.</b> Each pair gets one unit of capital: one unit long and one unit short, split by the hedge ratio. The cohort's return is total pair profit divided by the number of pairs it was meant to hold, whether or not they traded (the "committed capital" return, the conservative choice).</li>
-    <li><b>Costs.</b> <span data-k="params.cost_bps">…</span> basis points of the amount traded, per leg and per side, covering commission, half the bid-ask spread and market impact for liquid large caps. Shorting costs <span data-k="params.borrow" data-fmt="pct">…</span> a year of the short position. The results page shows what happens from 0 to 30 bps.</li>
+    <li><b>Trading costs, stock by stock.</b> Every purchase and sale pays a commission of <span data-k="params.commission" data-fmt="bps">…</span> plus half the bid-ask spread. Free data has no quotes, so the spread is modelled: proportional to each stock's volatility over the past month, scaled so the typical stock in calm years (2015–2019) pays <span data-k="params.half_spread_calm" data-fmt="bps">…</span>. Spreads therefore widen in a crisis, when pair trades cluster. (The Abdi–Ranaldo estimator from daily highs and lows was tried first and rejected: on these liquid stocks it returned zero for almost half the stock-days.)</li>
+    <li><b>Transaction taxes</b> on every purchase, including buying back a stock sold short, by the country where the company is registered (so Airbus and STMicroelectronics, Dutch companies listed in Paris, pay no French tax). The rates are listed below.</li>
+    <li><b>Short-selling bans.</b> While a regulator banned new short positions, the strategy cannot open a trade that sells that stock short; it waits, and trades if the signal is still there when the ban lifts. Positions already open may stay, as the rules allowed. Bans that only stopped <em>naked</em> short selling (selling without borrowing first, as in Germany in 2008) do not affect a strategy that borrows. The bans used are listed below.</li>
+    <li><b>Borrowing</b> stock to sell short costs <span data-k="params.borrow" data-fmt="pct">…</span> a year of the short position. The capital set aside earns the overnight rate (below).</li>
+    <li><b>Capacity.</b> How large could the strategy be? For each trade of the last three years, the portfolio size at which it would take <span data-k="params.capacity_adv" data-fmt="pct">…</span> of either stock's average daily trading (home exchange only, so a cautious figure); the published capacity is the size at which 95% of trades fit.</li>
   </ul>
+  <h3>Transaction taxes</h3>
+  <div class="scroll"><table id="taxes"></table></div>
+  <h3>Short-selling bans</h3>
+  <div class="scroll"><table id="bans"></table></div>
 
   <h2>The three methods</h2>
   <h3>1. Distance (Gatev, Goetzmann and Rouwenhorst, 2006)</h3>
@@ -82,7 +90,7 @@
   <ul>
     <li><b>Survivorship bias.</b> The universe is today's large caps. Firms that were taken over, went bust or shrank out of the index are missing. Pairs whose stocks later failed are exactly the ones that diverge for good, so the backtest is probably too kind.</li>
     <li><b>Free data.</b> Yahoo's adjusted prices contain errors. The rules above catch the large ones; small ones remain.</li>
-    <li><b>Flat costs.</b> Real costs rise in a crisis, when spreads widen and borrowing gets scarce or recalled. Stocks can become impossible to short (bans on financials in 2008 and 2011).</li>
+    <li><b>Modelled frictions.</b> Spreads are modelled from volatility, not measured from quotes. The borrow fee is flat, while real fees jump for hard-to-borrow stocks and loans can be recalled. Ban dates come from regulators' announcements as reported by law firms and the press; two are approximate and flagged in the table. Belgium's stock-exchange tax is left out because foreign institutions are exempt.</li>
     <li><b>Closing prices only.</b> No intraday data, no auctions modelled, no capacity limit.</li>
     <li><b>One headline setting.</b> The rules follow the literature and were fixed in advance; the grid measures how fragile they are but is not searched for a better one. A desk would add stop-losses, sector limits and volatility sizing.</li>
     <li><b>Simple returns within a cohort.</b> Profits are not reinvested inside a six-month trading period, only between periods.</li>
