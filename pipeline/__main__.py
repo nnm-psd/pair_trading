@@ -90,7 +90,7 @@ def capacity(t: pd.DataFrame, adv: pd.DataFrame) -> dict:
     leg_a = 2 / (1 + t.beta) * share
     leg_b = 2 * t.beta / (1 + t.beta) * share
     adv_a = np.array([adv.at[d, a] for d, a in zip(t.open, t.a)])
-    adv_b = np.array([adv.at[d, b] for d, b in zip(t.open, t.b)])
+    adv_b = np.array([np.inf if b == strategy.HEDGE else adv.at[d, b] for d, b in zip(t.open, t.b)])  # baskets are liquid
     limit = np.minimum(CAPACITY_ADV * adv_a / leg_a, CAPACITY_ADV * adv_b / leg_b)
     return {"aum": r4(np.nanpercentile(limit, 5)), "median_trade": r4(np.nanmedian(limit))}
 
@@ -109,7 +109,7 @@ def survivorship(px, sectors, fr, adv, nets, trades, rf, mkt) -> dict:
         r2 = stats.net(screened[(m, *BASE)], BASE_COST)
         t = trades[trades.method == m]
         move = np.minimum([p.at[c, a] / p.at[o, a] - 1 for o, c, a in zip(t.open, t.close, t.a)],
-                          [p.at[c, b] / p.at[o, b] - 1 for o, c, b in zip(t.open, t.close, t.b)])
+                          [0 if b == strategy.HEDGE else p.at[c, b] / p.at[o, b] - 1 for o, c, b in zip(t.open, t.close, t.b)])
         hit = t[move <= -0.4]
         out["methods"][m] = {
             "sharpe_all": r4(stats.sharpe(nets[m])), "sharpe_screened": r4(stats.sharpe(r2)),
@@ -136,7 +136,9 @@ def main() -> None:
     mkt = px.pct_change(fill_method=None).mean(axis=1).reindex(idx).fillna(0) - rf  # equal-weight universe, excess
     nets = {m: stats.net(base[m], BASE_COST) for m in METHODS}
     grid = pd.DataFrame({k: stats.net(v, BASE_COST) for k, v in out.items()})
-    trial_srs = list(grid.mean() / grid.std())
+    stopped, *_ = strategy.run(px, sectors, fr, grid=False, stop=strategy.STOP)
+    stops = {m: stats.net(stopped[(m, *BASE)], BASE_COST) for m in METHODS}
+    trial_srs = list(grid.mean() / grid.std()) + [r.mean() / r.std() for r in stops.values()]
 
     F = factors.french(cached).join(factors.reversal(px, sectors), how="inner")
     F.insert(0, "MKT", mkt)
@@ -179,19 +181,20 @@ def main() -> None:
 
     last = px.index[-1]
     names = data.UNIVERSE.name
+    name = lambda t: "its factor hedge" if t == strategy.HEDGE else names[t]
     # The same pair can be open in several overlapping cohorts: show it once, from the newest cohort.
     held = {}
     for p in live:
         held.setdefault((p["method"], p["a"], p["b"]), []).append(p)
     newest = [max(ps, key=lambda p: p["cohort"]) | {"cohorts": len(ps)} for ps in held.values()]
     positions = []
-    for p in sorted(newest, key=lambda p: -abs(p["z"].iloc[-1])):
+    for p in sorted(newest, key=lambda p: -abs(p["z"].iloc[-1]) / p["entry"]):  # how far past its own entry level
         z = p["z"]
         positions.append({
-            "method": p["method"], "a": p["a"], "b": p["b"], "a_name": names[p["a"]], "b_name": names[p["b"]],
+            "method": p["method"], "a": p["a"], "b": p["b"], "a_name": names[p["a"]], "b_name": name(p["b"]),
             "sector": sectors[p["a"]], "cohort": p["cohort"].date().isoformat(),
             "opened": p["opened"].date().isoformat(), "side": p["side"], "z": r4(z.iloc[-1]),
-            "pnl": r4(p["pnl"]), "beta": r4(p["beta"]), "cohorts": p["cohorts"],
+            "pnl": r4(p["pnl"]), "beta": r4(p["beta"]), "cohorts": p["cohorts"], "entry": r4(p["entry"]),
             "z_dates": [d.date().isoformat() for d in z.index], "z_hist": [r4(v) for v in z],
         })
 
@@ -204,7 +207,7 @@ def main() -> None:
         "params": {"formation_days": BASE[0], "trading_days": strategy.TRADE, "pairs": BASE[1], "entry": BASE[2],
                    "exit": strategy.EXIT, "commission": costs.COMMISSION, "half_spread_calm": costs.HALF_SPREAD_CALM,
                    "capacity_adv": CAPACITY_ADV, "borrow": stats.BORROW, "p_max": strategy.P_MAX,
-                   "kalman_delta": strategy.KALMAN_DELTA, "costs": list(COSTS), "entries": list(ENTRIES),
+                   "kalman_delta": strategy.KALMAN_DELTA, "ou_cost": strategy.OU_COST, "costs": list(COSTS), "entries": list(ENTRIES),
                    "forms": list(strategy.FORMS), "ns": list(strategy.NS), "trials": len(trial_srs),
                    "block": stats.BLOCK, "factor_end": F.index[-1].date().isoformat(),
                    "rf": r4(rf.mean() * 252)},
@@ -234,6 +237,8 @@ def main() -> None:
             {"ticker": t, "name": names[t], "date": d.date().isoformat()} for d, t in audit_fixed.stack()[lambda x: x].index]},
         "positions": positions,
         "live": live_summary(record_live(nets, rf), nets),
+        "stop_loss": {"level": strategy.STOP, "methods": {m: {"sharpe": r4(stats.sharpe(stops[m])), "excess": r4(stops[m].mean() * 252),
+                                                                "max_dd": r4(stats.drawdown(stops[m] + rf).min())} for m in METHODS}},
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(result, separators=(",", ":")))

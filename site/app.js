@@ -5,7 +5,11 @@ const METHODS = {
   distance: { label: "Distance", color: "--s1" },
   cointegration: { label: "Cointegration", color: "--s2" },
   kalman: { label: "Kalman filter", color: "--s3" },
+  ou: { label: "OU thresholds", color: "--s4" },
+  copula: { label: "Copula", color: "--s5" },
+  pca: { label: "PCA residuals", color: "--s6" },
 };
+const WORDS = ["no method", "one method", "two methods", "three methods", "four methods", "five methods"];
 const KEYS = Object.keys(METHODS);
 const $ = (id) => document.getElementById(id);
 const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
@@ -55,17 +59,18 @@ function lines(el, xs, series, { yFmt, height = 300, time = true, extra = [], po
   }, [xs, ...series.map((s) => s.data), ...extra.map((e) => e.data)], el);
 }
 
-function refLine(value, n, color, label, dash = [4, 4]) {
-  return { label, stroke: color, width: 1, dash, data: new Array(n).fill(value), points: { show: false }, value: () => "" };
+function refLine(value, n, color, label, dash = [4, 4], width = 1) {
+  return { label, stroke: color, width, dash, data: new Array(n).fill(value), points: { show: false }, value: () => "" };
 }
 
 /* ---------- results page ---------- */
 
 function hero() {
-  const p = R.positions[0];
+  // the classic pair methods measure the spread in standard deviations, which is what the headline says
+  const p = R.positions.find((x) => ["distance", "cointegration", "kalman"].includes(x.method));
   if (!p) {
     $("hero-title").textContent = "No position is open today.";
-    $("hero-text").textContent = "None of the three methods sees a spread wide enough to trade at the latest close.";
+    $("hero-text").textContent = "No method sees a spread wide enough to trade at the latest close.";
     return;
   }
   const m = METHODS[p.method].label.replace(/^[A-Z](?=[a-z]+$)/, (c) => c.toLowerCase());
@@ -74,11 +79,11 @@ function hero() {
   $("hero-title").textContent = `${p.a_name} and ${p.b_name} are ${Math.abs(p.z).toFixed(1)} standard deviations apart.`;
   $("hero-text").textContent = `That is the widest open spread at the ${longDate(R.data_end)} close. The ${m} model bought ${longName} and sold ${shortName} on ${longDate(p.opened)}, betting the gap closes. So far the trade has made ${signed(p.pnl)} on the capital set aside for the pair.` +
     (Math.abs(p.z) > 4 ? ` A spread this wide usually means the relationship has broken, not that a bargain has appeared: this is the main way pair trading loses money. The rules have no stop-loss, so the position stays open until the spread converges or its six-month window ends.` : "");
-  $("hero-cap").textContent = `Spread z-score of ${p.a_name} against ${p.b_name} since the pair's cohort started trading on ${longDate(p.cohort)}. A trade opens beyond the gold lines (±${R.params.entry}) and closes when the spread crosses zero.`;
+  $("hero-cap").textContent = `Spread z-score of ${p.a_name} against ${p.b_name} since the pair's cohort started trading on ${longDate(p.cohort)}. A trade opens beyond the gold lines (±${num(p.entry, 2)}) and closes ${p.method === "ou" ? "at the opposite line" : "when the spread crosses zero"}.`;
   const n = p.z_dates.length;
   chart($("hero-chart"), () => lines($("hero-chart"), p.z_dates.map(ts), [{ label: `${p.a} vs ${p.b}`, data: p.z_hist, color: "--ink", width: 2.5 }], {
     yFmt: (v) => v.toFixed(1), height: 280,
-    extra: [refLine(R.params.entry, n, css("--gold"), `+${R.params.entry}`, []), refLine(-R.params.entry, n, css("--gold"), `−${R.params.entry}`, []), refLine(0, n, css("--muted"), "0")],
+    extra: [refLine(p.entry, n, css("--gold"), "+entry", [], 1.5), refLine(-p.entry, n, css("--gold"), "−entry", [], 1.5), refLine(0, n, css("--muted"), "0")],
   }));
 }
 
@@ -94,12 +99,14 @@ function verdict(best) {
   const between = R.tests.filter((t) => t.b !== "market");
   const pmin = Math.min(...between.map((t) => t.p));
   out.push(pmin >= 0.05 ? `No method is significantly better than another (smallest p-value ${num(pmin)}).` : `Some differences between methods are significant; see the tests below.`);
-  const tmax = Math.max(...ms.map((m) => Math.abs(m.factors.alpha_t)));
+  const tmax = Math.max(...ms.map((m) => m.factors.alpha_t));
   const leans = (f, sign) => ms.filter((m) => sign * m.factors.t[f] >= 2).length;
-  const styles = [leans("REV", 1) === ms.length && "all three lean on short-term reversal", leans("WML", -1) >= 2 && `${leans("WML", -1) === ms.length ? "all three" : ["", "one", "two"][leans("WML", -1)]} bet against momentum`].filter(Boolean);
-  out.push((tmax < 2 ? `Once market, style and reversal factors are accounted for, no alpha is significant (largest |t| ${num(tmax, 1)})` : `At least one method keeps a significant alpha after the factors`) + (styles.length ? `, and ${styles.join(" and ")}.` : "."));
-  const late = ms.map((m) => m.halves.second.sharpe);
-  if (late.every((s) => s < ms[0].halves.first.sharpe && s < 0.2)) out.push(`Most of the profit came before ${longDate(ms[0].halves.split)}; since then the Sharpe ratios are ${late.map((s) => num(s)).join(", ")}.`);
+  const count = (n) => (n === ms.length ? "every method" : WORDS[n]);
+  const styles = [leans("REV", 1) >= 2 && `${count(leans("REV", 1))} lean${[1, ms.length].includes(leans("REV", 1)) ? "s" : ""} on short-term reversal`, leans("WML", -1) >= 2 && `${count(leans("WML", -1))} bet${[1, ms.length].includes(leans("WML", -1)) ? "s" : ""} against momentum`].filter(Boolean);
+  out.push((tmax < 2 ? `Once market, style and reversal factors are accounted for, no method has a significantly positive alpha (best t ${num(tmax, 1)})` : `At least one method keeps a significantly positive alpha after the factors`) + (styles.length ? `; ${styles.join(" and ")}.` : "."));
+  const first = ms.map((m) => m.halves.first.sharpe), late = ms.map((m) => m.halves.second.sharpe);
+  const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+  if (late.every((s) => s < 0.2) && mean(late) < mean(first)) out.push(`Results got worse after ${longDate(ms[0].halves.split)}: since then the Sharpe ratios are ${KEYS.map((k, i) => `${num(late[i])} (${METHODS[k].label})`).join(", ")}.`);
   return out.join(" ");
 }
 
@@ -111,7 +118,7 @@ function summary() {
   $("intro").textContent = `${R.universe.length} large caps listed in euros, ${R.candidate_pairs} same-sector pairs, ${R.cohorts} monthly cohorts and ${years.toFixed(0)} years of out-of-sample trading since ${longDate(R.start)}. Every figure is after costs: bid-ask spreads and commission stock by stock, transaction taxes, a ${pct(R.params.borrow, 1)} borrow fee, and no new shorts during regulators' short-selling bans.`;
   $("verdict-text").textContent = verdict(best);
 
-  const ci = (c) => `${num(c[0])} to ${num(c[1])}`;
+  const ci = (c) => `${num(c[0])}, ${num(c[1])}`;
   const rows = [
     ["Return a year, with cash interest", (s) => s.net.cagr, pct, mk.cagr, "max"],
     ["Average yearly return above cash", (s) => s.net.excess, pct, mk.excess, "max"],
@@ -131,10 +138,10 @@ function summary() {
   const head = `<thead><tr><th scope="col">After costs, ${R.start.slice(0, 4)}–${R.data_end.slice(0, 4)}</th>${KEYS.map((k) => `<th scope="col"><span class="key" style="background:var(${METHODS[k].color})"></span>${METHODS[k].label}</th>`).join("")}<th scope="col">Market<br><span class="sub">equal-weight, held</span></th></tr></thead>`;
   const body = rows.map(([label, get, f, mkt, rule]) => {
     const vals = KEYS.map((k) => get(R.methods[k]));
-    const top = rule ? Math.max(...vals) : null;
+    const top = rule && vals.filter((v) => v === Math.max(...vals)).length === 1 ? Math.max(...vals) : null; // bold a unique best only
     return `<tr><th scope="row">${label}</th>${vals.map((v) => `<td${v === top ? ' class="best"' : ""}>${f(v)}</td>`).join("")}<td>${mkt == null ? "–" : f(mkt)}</td></tr>`;
   }).join("");
-  $("summary").innerHTML = head + `<tbody>${body}</tbody><caption>Bold marks the best of the three methods. The market is the equal-weighted universe with dividends, a reference point rather than a competitor: pair trading is built to have no market exposure.</caption>`;
+  $("summary").innerHTML = head + `<tbody>${body}</tbody><caption>Bold marks the best method. The market is the equal-weighted universe with dividends, a reference point rather than a competitor: pair trading is built to have no market exposure.</caption>`;
 }
 
 let costMode = "net";
@@ -275,6 +282,17 @@ function evidence() {
 
   strip();
   survivorship();
+  stopLoss();
+}
+
+function stopLoss() {
+  const S = R.stop_loss;
+  $("stop").innerHTML = `<thead><tr><th scope="col"></th>${KEYS.map((k) => `<th scope="col">${METHODS[k].label}</th>`).join("")}</tr></thead><tbody>` +
+    `<tr><th scope="row">Sharpe ratio, no stop</th>${KEYS.map((k) => `<td>${num(R.methods[k].net.sharpe)}</td>`).join("")}</tr>` +
+    `<tr><th scope="row">Sharpe ratio, stop at |z| ≥ ${S.level}</th>${KEYS.map((k) => `<td>${num(S.methods[k].sharpe)}</td>`).join("")}</tr>` +
+    `<tr><th scope="row">Worst drawdown, no stop</th>${KEYS.map((k) => `<td>${pct(R.methods[k].net.max_dd, 1)}</td>`).join("")}</tr>` +
+    `<tr><th scope="row">Worst drawdown, with stop</th>${KEYS.map((k) => `<td>${pct(S.methods[k].max_dd, 1)}</td>`).join("")}</tr>` +
+    `</tbody><caption>A stopped pair is not traded again in the same six-month period. The stop variants were fixed in advance and are counted in the deflated Sharpe ratio.</caption>`;
 }
 
 function survivorship() {
@@ -312,7 +330,7 @@ function strip() {
     svg += `<circle cx="${x(m.net.sharpe)}" cy="${y}" r="9" fill="none" stroke="var(--ink)" stroke-width="2"><title>Headline variant: Sharpe ${num(m.net.sharpe)}</title></circle>`;
   });
   $("grid-chart").innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Sharpe ratio of every variant in the parameter grid, by method">${svg}</svg>`;
-  $("grid-text").textContent = `Each dot is one of the ${R.params.trials / KEYS.length} variants of a method (formation ${R.params.forms.join("/")} days × ${R.params.ns.join("/")} pairs × entry ${R.params.entries.join("/")}); the ringed dot is the headline. Probability of backtest overfitting: ${KEYS.map((k) => `${METHODS[k].label} ${pct(R.methods[k].grid.pbo, 0)}`).join(", ")}; all ${R.params.trials} together ${pct(R.pbo_all, 0)}. Around 50% means picking the best variant in one half of history tells you nothing about the other half.`;
+  $("grid-text").textContent = `Each dot is one of the ${R.params.forms.length * R.params.ns.length * R.params.entries.length} variants of a method (formation ${R.params.forms.join("/")} days × ${R.params.ns.join("/")} pairs, or 5/10/15 factors for PCA, × entry ${R.params.entries.join("/")}); the ringed dot is the headline. Probability of backtest overfitting: ${KEYS.map((k) => `${METHODS[k].label} ${pct(R.methods[k].grid.pbo, 0)}`).join(", ")}; all ${R.params.trials} together ${pct(R.pbo_all, 0)}. Around 50% means picking the best variant in one half of history tells you nothing about the other half.`;
 }
 
 /* ---------- method page ---------- */

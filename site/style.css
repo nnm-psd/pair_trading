@@ -18,6 +18,9 @@
   --s1: #2a78d6;
   --s2: #eb6834;
   --s3: #1baf7a;
+  --s4: #eda100;
+  --s5: #e87ba4;
+  --s6: #008300;
   --bench: #8a8f9c;
   --pos: 42, 120, 214;
   --neg: 208, 59, 59;
@@ -40,6 +43,9 @@
     --s1: #3987e5;
     --s2: #d95926;
     --s3: #199e70;
+    --s4: #c98500;
+    --s5: #d55181;
+    --s6: #008300;
     --bench: #8a8f9c;
     --pos: 57, 135, 229;
     --neg: 230, 103, 103;
@@ -83,7 +89,7 @@ figcaption { color: var(--muted); font-size: 0.875rem; margin-top: 8px; max-widt
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
 
-.toggle { display: inline-flex; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; margin: 6px 0 0; }
+.toggle { display: inline-flex; flex-wrap: wrap; max-width: 100%; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; margin: 6px 0 0; }
 .toggle button { font: inherit; font-size: 0.875rem; background: var(--surface); color: var(--ink-2); border: 0; padding: 6px 12px; cursor: pointer; }
 .toggle button + button { border-left: 1px solid var(--rule); }
 .toggle button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
@@ -91,10 +97,10 @@ figcaption { color: var(--muted); font-size: 0.875rem; margin-top: 8px; max-widt
 .scroll { overflow-x: auto; margin-top: 16px; }
 table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; background: var(--surface); }
 caption { text-align: left; color: var(--muted); font-size: 0.875rem; padding: 0 0 8px; caption-side: bottom; padding-top: 8px; }
-th, td { padding: 8px 12px; border-bottom: 1px solid var(--grid); text-align: right; white-space: nowrap; }
+th, td { padding: 8px 10px; border-bottom: 1px solid var(--grid); text-align: right; white-space: nowrap; }
 th:first-child, td:first-child { text-align: left; }
-thead th { font-weight: 600; color: var(--ink-2); border-bottom: 1px solid var(--rule); vertical-align: bottom; }
-tbody th { font-weight: 400; color: var(--ink-2); }
+thead th { font-weight: 600; color: var(--ink-2); border-bottom: 1px solid var(--rule); vertical-align: bottom; white-space: normal; }
+tbody th { font-weight: 400; color: var(--ink-2); white-space: normal; min-width: 16ch; }
 td.best { font-weight: 700; }
 .key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: 0; }
 td.heat { color: var(--ink); }

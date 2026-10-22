@@ -18,10 +18,10 @@
 <main id="main"><div class="wrap">
 <section class="prose">
   <h1>How the study works</h1>
-  <p class="lede">Three textbook ways to trade pairs, run side by side under one set of rules that was fixed before any result was seen, with realistic costs and statistics that correct for luck.</p>
+  <p class="lede">Six ways to trade pairs, from the textbook classics to the methods that followed them, run side by side under one set of rules that was fixed before any result was seen, with realistic costs and statistics that correct for luck.</p>
 
   <h2>The question</h2>
-  <p>Pair trading buys one stock and sells a similar one when their prices drift unusually far apart, and unwinds when they come back together. It made money in US stocks in the 1960s–1990s (Gatev, Goetzmann and Rouwenhorst, 2006) but later studies found the profits shrinking (Do and Faff, 2010). This study asks two things for euro-area large caps since 2004: does pair trading still make money after realistic costs, and which of the three classic ways of choosing and hedging pairs holds up best?</p>
+  <p>Pair trading buys one stock and sells a similar one when their prices drift unusually far apart, and unwinds when they come back together. It made money in US stocks in the 1960s–1990s (Gatev, Goetzmann and Rouwenhorst, 2006) but later studies found the profits shrinking (Do and Faff, 2010). This study asks two things for euro-area large caps since 2004: does pair trading still make money after realistic costs, and which way of choosing, hedging and timing pairs holds up best?</p>
 
   <h2>Data</h2>
   <p>Daily closing prices adjusted for splits and dividends, from Yahoo Finance, for <b data-k="universe.length">…</b> large caps listed in euros (Germany, France, Italy, Spain, the Netherlands, Belgium, Finland, Austria, Portugal and Ireland), from 2003. Staying in one currency keeps exchange rates out of every pair. Pairs are only formed between stocks in the same sector, which gives <b data-k="candidate_pairs">…</b> candidate pairs.</p>
@@ -58,7 +58,8 @@
   <h3>Short-selling bans</h3>
   <div class="scroll"><table id="bans"></table></div>
 
-  <h2>The three methods</h2>
+  <h2>The six methods</h2>
+  <p>The first three are the classics. The next three each change one thing: when to trade (OU thresholds), how to read the signal (copula), or what to trade against (PCA residuals). Each method's grid maps the three entry levels onto its own signal, as described below.</p>
   <h3>1. Distance (Gatev, Goetzmann and Rouwenhorst, 2006)</h3>
   <p>Rebase both prices to 1 at the start of formation and pick the pairs whose paths are closest: the smallest sum of squared differences.</p>
   <p class="formula">SSD = Σ<sub>t</sub> (p̃<sub>A,t</sub> − p̃<sub>B,t</sub>)², &nbsp; p̃<sub>t</sub> = P<sub>t</sub> / P<sub>0</sub></p>
@@ -73,6 +74,22 @@
   <p>The same pairs as the cointegration method, so the only difference is how the hedge is set. Instead of fixing α and β for six months, a Kalman filter lets them drift as a random walk and updates them every day:</p>
   <p class="formula">y<sub>t</sub> = β<sub>t</sub> x<sub>t</sub> + α<sub>t</sub> + v<sub>t</sub>, &nbsp; (β<sub>t</sub>, α<sub>t</sub>) = (β<sub>t−1</sub>, α<sub>t−1</sub>) + w<sub>t</sub>, &nbsp; Var(w) = δ / (1 − δ) · I</p>
   <p>Here y and x are log prices rebased to zero at the start of formation, δ = <span data-k="params.kalman_delta">…</span>, and the noise of v<sub>t</sub> is the variance of the formation-period residual. The filter starts from the formation estimates. The z-score is the forecast error divided by its predicted standard deviation, both computed before that day's price is seen. Position size uses the β known on the day the signal fires and is then held fixed.</p>
+
+  <h3>4. Ornstein–Uhlenbeck thresholds (Bertram, 2010)</h3>
+  <p>The same pairs and spread as the cointegration method, but each pair gets its own entry level. The formation-period spread is fitted as an Ornstein–Uhlenbeck process, dX = −θX dt + σ dW. Bertram shows that for a trade entered at −a and closed at +a (and the mirror image), the expected time per round trip is (2π/θ)·erfi(a√θ/σ). So the expected return per unit of time is</p>
+  <p class="formula">μ(a) = (2a − c) / E[T](a),</p>
+  <p>which is maximised over a, with c = <span data-k="params.ou_cost" data-fmt="pct">…</span> of round-trip cost. Trades close at the opposite threshold, not at zero, so each one earns the full width 2a. The grid scales the optimal a by 0.75, 1 and 1.25.</p>
+
+  <h3>5. Copula (Liew and Wu, 2013; Rad, Low and Faff, 2016)</h3>
+  <p>The same pairs as the distance method, but a richer view of how the two stocks move together. Each stock's daily returns are turned into probabilities with its own formation-period distribution, u = F<sub>A</sub>(r<sub>A</sub>) and v = F<sub>B</sub>(r<sub>B</sub>). Five copula families (Gaussian, Student-t, Clayton, Gumbel, Frank) are fitted by inverting Kendall's τ, and the best is chosen by AIC. Each day the copula gives</p>
+  <p class="formula">h<sub>1</sub> = P(U ≤ u | V = v), &nbsp; h<sub>2</sub> = P(V ≤ v | U = u),</p>
+  <p>how unusual each stock's move is, given the other's. The running sums of h<sub>1</sub> − ½ and h<sub>2</sub> − ½ are mispricing indices. The signal is their difference, entered at ±1 (±0.75 / 1 / 1.25 in the grid) and closed when it crosses zero.</p>
+
+  <h3>6. PCA residuals (Avellaneda and Lee, 2010)</h3>
+  <p>Not pairs of stocks, but each stock against its own hedge. The formation-period correlation matrix gives eigenportfolios, statistical factors that capture what moves the whole market and its sectors. Each stock's returns over the last 60 days are regressed on the top 10 factors (5 / 10 / 15 in the grid), and the cumulative residual is fitted as an OU process. The 20 stocks that revert fastest, within about 30 trading days, are traded on the s-score, (X − m) / σ<sub>eq</sub>. A rich stock is sold and its factor hedge bought, and the reverse for a cheap one. Entry is at ±1.25 as in the paper (0.94 / 1.25 / 1.56 in the grid). Simplifications: parameters are re-estimated monthly, not daily; trades close when the s-score crosses zero, the shared rule; and the hedge pays the average stock's spread and tax, never banned, as a futures hedge would. Monthly re-estimation is the important one: as the month's parameters age, a stock's residual can drift far from its fitted mean (s-scores of 10 or more appear), so this is a lower bound on what the paper's daily version would do.</p>
+
+  <h3>Stop-loss overlay</h3>
+  <p>Each method's headline variant is run again with a stop: when a trade's spread reaches <span data-k="stop_loss.level">…</span> (in the method's own units), the trade is closed and the pair is not traded again in that period.</p>
 
   <h2>Statistics</h2>
   <ul>
@@ -106,15 +123,18 @@
 
   <h2>References</h2>
   <ol class="refs">
+    <li>Avellaneda, M. and Lee, J.-H. (2010). Statistical arbitrage in the US equities market. <i>Quantitative Finance</i>, 10(7).</li>
     <li>Bailey, D. H. and López de Prado, M. (2012). The Sharpe ratio efficient frontier. <i>Journal of Risk</i>, 15(2).</li>
     <li>Bailey, D. H. and López de Prado, M. (2014). The deflated Sharpe ratio: correcting for selection bias, backtest overfitting and non-normality. <i>Journal of Portfolio Management</i>, 40(5).</li>
     <li>Bailey, D. H., Borwein, J., López de Prado, M. and Zhu, Q. J. (2017). The probability of backtest overfitting. <i>Journal of Computational Finance</i>, 20(4).</li>
+    <li>Bertram, W. K. (2010). Analytic solutions for optimal statistical arbitrage trading. <i>Physica A</i>, 389(11).</li>
     <li>Chan, E. (2013). <i>Algorithmic Trading: Winning Strategies and Their Rationale</i>. Wiley.</li>
     <li>Do, B. and Faff, R. (2010). Does simple pairs trading still work? <i>Financial Analysts Journal</i>, 66(4).</li>
     <li>Engle, R. F. and Granger, C. W. J. (1987). Co-integration and error correction: representation, estimation, and testing. <i>Econometrica</i>, 55(2).</li>
     <li>Fama, E. F. and French, K. R. (2015). A five-factor asset pricing model. <i>Journal of Financial Economics</i>, 116(1). Factor data: Kenneth R. French Data Library.</li>
     <li>Gatev, E., Goetzmann, W. N. and Rouwenhorst, K. G. (2006). Pairs trading: performance of a relative-value arbitrage rule. <i>Review of Financial Studies</i>, 19(3).</li>
     <li>Krauss, C. (2017). Statistical arbitrage pairs trading strategies: review and outlook. <i>Journal of Economic Surveys</i>, 31(2).</li>
+    <li>Liew, R. Q. and Wu, Y. (2013). Pairs trading: a copula approach. <i>Journal of Derivatives &amp; Hedge Funds</i>, 19(1).</li>
     <li>MacKinnon, J. G. (2010). Critical values for cointegration tests. Queen's Economics Department Working Paper 1227.</li>
     <li>Newey, W. K. and West, K. D. (1987). A simple, positive semi-definite, heteroskedasticity and autocorrelation consistent covariance matrix. <i>Econometrica</i>, 55(3).</li>
     <li>Politis, D. N. and Romano, J. P. (1992). A circular block-resampling procedure for stationary data. In <i>Exploring the Limits of Bootstrap</i>, Wiley.</li>

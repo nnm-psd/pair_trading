@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Euro Pairs: pair trading on euro-area stocks</title>
-<meta name="description" content="An open, daily-updated study of three pair trading methods (distance, cointegration, Kalman filter) on euro-area large caps, with costs, risk statistics and today's open positions.">
+<meta name="description" content="An open, daily-updated study of six pair trading methods (distance, cointegration, Kalman filter, OU thresholds, copula, PCA residuals) on euro-area large caps, with costs, risk statistics and today's open positions.">
 <link rel="preload" href="fonts/spectral-600.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="vendor/uPlot.min.css">
 <link rel="stylesheet" href="style.css">
@@ -55,6 +55,9 @@
   <h3>Does today's stock list flatter it?</h3>
   <p id="surv-text"></p>
   <div class="scroll"><table id="surv"></table></div>
+  <h3>Would a stop-loss help?</h3>
+  <p>Desks often cut a pair that keeps diverging. The test: close a trade once its spread reaches 4 standard deviations (or the method's equivalent), and leave the pair alone for the rest of the period.</p>
+  <div class="scroll"><table id="stop"></table></div>
   <h3>Every setting tried</h3>
   <figure><div class="panel chart" id="grid-chart"></div><figcaption id="grid-text"></figcaption></figure>
 </div></section>

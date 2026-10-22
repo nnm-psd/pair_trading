@@ -18,7 +18,10 @@ from functools import partial
 
 import numpy as np
 import pandas as pd
+from scipy.special import erfi
 from statsmodels.tsa.adfvalues import mackinnonp
+
+from . import copula
 
 MODEL_VERSION = "1.0"  # bump whenever the headline model changes; the live record is kept per version
 TRADE = 126
@@ -28,7 +31,13 @@ FIELDS = ("pnl", "traded", "short", "tax", "spread")
 EXIT = 0.0
 P_MAX = 0.05  # Engle-Granger p-value cut-off
 KALMAN_DELTA = 1e-5  # state noise of the Kalman hedge ratio, on log prices rebased to 0 at formation start
-METHODS = ("distance", "cointegration", "kalman")
+METHODS = ("distance", "cointegration", "kalman", "ou", "copula", "pca")
+STOP = 4.0  # stop-loss overlay: exit at |z| >= STOP and stay out of the pair for the rest of the period
+OU_COST = 0.006  # round-trip cost in log-spread units for Bertram's optimal threshold (~4 legs x 8 bps + tax)
+PCA_FACTORS = (5, 10, 15)  # the PCA grid varies the number of factors where the others vary the number of pairs
+PCA_SLOTS = 20  # PCA trades the 20 fastest mean-reverting stocks, each against its own factor hedge
+PCA_WINDOW = 60  # days of residuals for the OU fit (Avellaneda & Lee)
+HEDGE = "HEDGE"  # the b leg of a PCA position: a factor portfolio, not a stock
 
 
 def candidate_pairs(sectors: pd.Series) -> list[tuple[str, str]]:
@@ -119,6 +128,82 @@ def signals(method: str, pair: dict, form: pd.DataFrame, trade_px: pd.DataFrame)
     return kalman(np.log(pa) - la0, np.log(pb) - lb0, (pair["beta"], alpha), ve)
 
 
+def bertram(theta: float, sigma: float, c: float) -> float:
+    """Bertram (2010): for an OU spread dX = -theta X dt + sigma dW (per day) traded symmetrically, enter at -a and
+    exit at +a (and the mirror image), the a that maximises expected return per unit of time after a round-trip
+    cost c. The expected trade length is E[T] = (2 pi / theta) erfi(a sqrt(theta) / sigma)."""
+    eq = sigma / np.sqrt(2 * theta)
+    a = np.linspace(c / 2 + 1e-9, 4 * eq, 400)
+    mu = (2 * a - c) * theta / (2 * np.pi * erfi(a * np.sqrt(theta) / sigma))
+    return float(a[np.argmax(mu)])
+
+
+def select_pca(form: pd.DataFrame, k: int, n: int) -> list[dict]:
+    """Avellaneda & Lee (2010): k eigenportfolios of the formation-period correlation matrix as factors; each
+    stock's residual over the last PCA_WINDOW days is fitted as an OU process, and the n fastest mean-reverting
+    stocks (reversion within ~30 trading days) are kept."""
+    r = np.diff(form.to_numpy(), axis=0)
+    sd = r.std(0)
+    w, v = np.linalg.eigh(np.corrcoef(((r - r.mean(0)) / sd).T))
+    q = v[:, ::-1][:, :k] / sd[:, None]  # eigenportfolio weights
+    f = r[-PCA_WINDOW:] @ q
+    x = np.c_[np.ones(PCA_WINDOW), f]
+    coef = np.linalg.lstsq(x, r[-PCA_WINDOW:], rcond=None)[0]
+    cum = np.cumsum(r[-PCA_WINDOW:] - x @ coef, axis=0)
+    x0, x1 = cum[:-1], cum[1:]
+    b = ((x0 - x0.mean(0)) * (x1 - x1.mean(0))).sum(0) / ((x0 - x0.mean(0)) ** 2).sum(0)
+    a = x1.mean(0) - b * x0.mean(0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        kappa = -np.log(b) * 252
+        eq = np.sqrt((x1 - a - b * x0).var(0) / (1 - b**2))
+    ok = np.flatnonzero((b > 0) & (b < 1) & (kappa > 252 / 30))
+    best = ok[np.argsort(-kappa[ok])][:n]
+    return [{"a": form.columns[i], "b": HEDGE, "q": q, "cols": form.columns, "alpha": coef[0, i], "betas": coef[1:, i],
+             "m": a[i] / (1 - b[i]), "sd": eq[i], "score": kappa[i]} for i in best]
+
+
+def prepare(method: str, pair: dict, form: pd.DataFrame, trade_px: pd.DataFrame, s: int, end: int):
+    """Everything simulate() needs for one pair: prices of the two legs, z-score, hedge ratio, frictions, and how
+    the grid's entry level maps to this method (entry = e * scale; exit at the opposite threshold if flip)."""
+    fr = lambda t: [_FR[k][t].to_numpy()[s:end] for k in ("spread", "tax", "ban")]
+    pa = trade_px[pair["a"]].to_numpy()
+    if method == "pca":
+        r = np.r_[np.zeros((1, len(pair["cols"]))), np.diff(np.log(trade_px[pair["cols"]].to_numpy()), axis=0)]
+        hedge = (r @ pair["q"]) @ pair["betas"]  # the stock's factor exposure, day by day
+        x = np.cumsum(r[:, list(pair["cols"]).index(pair["a"])] - pair["alpha"] - hedge)
+        z = (x - pair["m"]) / pair["sd"]
+        sa, ta, ba = fr(pair["a"])
+        # the hedge is a basket: it pays the average stock's spread and tax, and is never banned (futures exist)
+        sb, tb = (_FR[k].iloc[s:end][pair["cols"]].mean(axis=1).to_numpy() for k in ("spread", "tax"))
+        frs = (sa, sb, ta, tb, ba, np.zeros(len(z), bool))
+        return pa, np.exp(np.cumsum(hedge)), z, np.ones(len(z)), frs, 1.25 / 2, False
+    pb = trade_px[pair["b"]].to_numpy()
+    (sa, ta, ba), (sb, tb, bb) = fr(pair["a"]), fr(pair["b"])
+    frs = (sa, sb, ta, tb, ba, bb)
+    if method == "ou":
+        e = form[pair["a"]].to_numpy() - pair["beta"] * form[pair["b"]].to_numpy() - pair["alpha"]
+        b = (e[1:] @ e[:-1]) / (e[:-1] @ e[:-1])
+        if not 0 < b < 1:
+            return pa, pb, np.zeros(len(pa)), np.ones(len(pa)), frs, np.inf, True
+        theta = -np.log(b)
+        sigma = np.std(e[1:] - b * e[:-1], ddof=1) * np.sqrt(2 * theta / (1 - b**2))
+        eq = sigma / np.sqrt(2 * theta)
+        z = (np.log(pa) - pair["beta"] * np.log(pb) - pair["alpha"]) / eq
+        return pa, pb, z, np.full(len(pa), pair["beta"]), frs, bertram(theta, sigma, OU_COST) / eq / 2, True
+    if method == "copula":
+        ra, rb = (np.diff(form[pair[k]].to_numpy()) for k in ("a", "b"))
+        fa, fb = copula.ecdf(ra), copula.ecdf(rb)
+        fam, par = copula.fit(fa(ra), fb(rb))
+        u = fa(np.diff(np.log(pa), prepend=np.log(pa[0])))
+        v = fb(np.diff(np.log(pb), prepend=np.log(pb[0])))
+        h1, h2 = copula.h(fam, par, u, v), copula.h(fam, par, v, u)
+        h1[0] = h2[0] = 0.5  # no move on the first day
+        z = np.cumsum(h1 - 0.5) - np.cumsum(h2 - 0.5)  # > 0: a has risen more than b's move implies
+        return pa, pb, z, np.ones(len(pa)), frs, 0.5, False
+    z, beta = signals(method, pair, form, trade_px)
+    return pa, pb, z, beta, frs, 1.0, False
+
+
 @dataclass
 class PairResult:
     pnl: np.ndarray  # gross P&L per day, per unit of capital
@@ -131,9 +216,10 @@ class PairResult:
 
 
 def simulate(pa: np.ndarray, pb: np.ndarray, z: np.ndarray, beta: np.ndarray, entry: float, final: bool,
-             fr: tuple | None = None) -> PairResult:
+             fr: tuple | None = None, exit: float = EXIT, stop: float | None = None) -> PairResult:
     """fr: per-day arrays for the two stocks (cost per side a, b; purchase tax a, b; short ban a, b).
-    Without it, trading is free and unrestricted (P&L before costs)."""
+    Without it, trading is free and unrestricted (P&L before costs). A long spread closes when z >= -exit and a
+    short one when z <= exit (exit = -entry closes at the opposite threshold). stop: see STOP."""
     n = len(z)
     if fr is None:
         fr = (np.zeros(n),) * 4 + (np.zeros(n, bool),) * 2
@@ -143,6 +229,7 @@ def simulate(pa: np.ndarray, pb: np.ndarray, z: np.ndarray, beta: np.ndarray, en
     sa = sb = 0.0  # shares of a and b
     b_sig = 1.0
     opened = None
+    stopped = False
 
     def book(t, da, db):  # buy (+) or sell (-) da shares of a and db shares of b at t's close
         va, vb = abs(da) * pa[t], abs(db) * pb[t]
@@ -170,9 +257,11 @@ def simulate(pa: np.ndarray, pb: np.ndarray, z: np.ndarray, beta: np.ndarray, en
         res.short[t] = max(-sa * pa[t], 0) + max(-sb * pb[t], 0)
         # decide tomorrow's position from today's close
         if want == 0:
-            if beta[t] > 0 and abs(z[t]) > entry:
+            if not stopped and beta[t] > 0 and abs(z[t]) > entry:
                 want, b_sig = (-1 if z[t] > 0 else 1), beta[t]
-        elif (want == 1 and z[t] >= -EXIT) or (want == -1 and z[t] <= EXIT):
+        elif stop is not None and abs(z[t]) >= stop:
+            want, stopped = 0, True
+        elif (want == 1 and z[t] >= -exit) or (want == -1 and z[t] <= exit):
             want = 0
     if pos and not final:
         res.open = {"opened": opened, "side": pos, "pnl": float(res.pnl[opened + 1:].sum()), "beta": float(b_sig)}
@@ -198,47 +287,58 @@ def _init(px: pd.DataFrame, pairs: list, fr: dict) -> None:
     _PX, _PAIRS, _FR = px, pairs, fr
 
 
-def _cohort(s: int, grid: bool = True):
+def _cohort(s: int, grid: bool = True, stop: float | None = None):
     """One monthly cohort, every variant. Pair P&L does not depend on how many pairs are held, so the best
-    max(NS) pairs are simulated once and smaller portfolios are prefixes of that ranking."""
+    max(NS) pairs are simulated once and smaller portfolios are prefixes of that ranking (PCA instead varies its
+    number of factors, so each factor count is its own selection)."""
     px, lp = _PX, np.log(_PX)
     end, final = min(s + TRADE, len(px)), s + TRADE <= len(px)
     trade_px, dates = px.iloc[s:end].ffill(), px.index[s:end]
     out, trades, live, n_selected = {}, [], [], {}
+    entries = ENTRIES if grid else (BASE[2],)
     for f in FORMS if grid else (BASE[0],):
         form = lp.iloc[s - f:s]
         ok = form.columns[form.notna().all() & lp.iloc[s].notna() & _FR["eligible"].iloc[s]]
         pairs = [p for p in _PAIRS if p[0] in ok and p[1] in ok]
         coint = select_cointegration(form[ok], pairs, max(NS))
-        chosen = {"distance": select_distance(form[ok], pairs, max(NS)), "cointegration": coint, "kalman": coint}
+        dist = select_distance(form[ok], pairs, max(NS))
+        chosen = {"distance": dist, "cointegration": coint, "kalman": coint, "ou": coint, "copula": dist}
         for m in METHODS:
-            n_selected[(m, f)] = len(chosen[m])
-            legs = [(trade_px[p["a"]].to_numpy(), trade_px[p["b"]].to_numpy()) for p in chosen[m]]
-            frs = [tuple(_FR[k][p[leg]].to_numpy()[s:end] for k in ("spread", "tax", "ban") for leg in ("a", "b"))
-                   for p in chosen[m]]
-            sig = [signals(m, p, form, trade_px) for p in chosen[m]]
-            for e in ENTRIES if grid else (BASE[2],):
-                acc = np.zeros((len(FIELDS), max(NS) + 1, end - s))
-                for i, (pair, (pa, pb), (z, beta), fr) in enumerate(zip(chosen[m], legs, sig, frs)):
-                    r = simulate(pa, pb, z, beta, e, final, fr)
-                    acc[:, i + 1] = [getattr(r, f) for f in FIELDS]
-                    if (f, e) != (BASE[0], BASE[2]) or i >= BASE[1]:
+            if m == "pca":
+                ks = list(zip(NS, PCA_FACTORS)) if grid else [(BASE[1], PCA_FACTORS[NS.index(BASE[1])])]
+                runs = [(n, select_pca(form[ok], k, PCA_SLOTS)) for n, k in ks]
+            else:
+                runs = [(None, chosen[m])]
+            for n_key, sel in runs:
+                n_selected[(m, f)] = min(len(sel), BASE[1])  # pairs actually traded by the headline
+                prep = [prepare(m, p, form, trade_px, s, end) for p in sel]
+                for e in entries:
+                    acc = np.zeros((len(FIELDS), max(NS) + 1, end - s))
+                    for i, (pair, (pa, pb, z, beta, frs, scale, flip)) in enumerate(zip(sel, prep)):
+                        entry = e * scale
+                        r = simulate(pa, pb, z, beta, entry, final, frs, -entry if flip else EXIT, stop)
+                        acc[:, i + 1] = [getattr(r, x) for x in FIELDS]
+                        if (f, e) != (BASE[0], BASE[2]) or i >= BASE[1] or n_key not in (None, BASE[1]):
+                            continue
+                        trades += [{"method": m, "a": pair["a"], "b": pair["b"], "cohort": dates[0],
+                                    "open": dates[t["open"]], "close": dates[t["close"]], "days": t["close"] - t["open"],
+                                    "side": t["side"], "beta": t["beta"], "pnl": t["pnl"], "converged": t["converged"]}
+                                   for t in r.trades]
+                        if r.open:
+                            o = r.open
+                            live.append({"method": m, "a": pair["a"], "b": pair["b"], "cohort": dates[0],
+                                         "opened": dates[o["opened"]], "side": o["side"], "pnl": o["pnl"],
+                                         "beta": o["beta"], "entry": entry, "z": pd.Series(z, index=dates)})
+                    cum = acc.cumsum(axis=1)
+                    if n_key is not None:
+                        out[(m, f, n_key, e)] = cum[:, PCA_SLOTS] / PCA_SLOTS
                         continue
-                    trades += [{"method": m, "a": pair["a"], "b": pair["b"], "cohort": dates[0],
-                                "open": dates[t["open"]], "close": dates[t["close"]], "days": t["close"] - t["open"],
-                                "side": t["side"], "beta": t["beta"], "pnl": t["pnl"], "converged": t["converged"]} for t in r.trades]
-                    if r.open:
-                        o = r.open
-                        live.append({"method": m, "a": pair["a"], "b": pair["b"], "cohort": dates[0],
-                                     "opened": dates[o["opened"]], "side": o["side"], "pnl": o["pnl"],
-                                     "beta": o["beta"], "z": pd.Series(z, index=dates)})
-                cum = acc.cumsum(axis=1)
-                for n in NS if grid else (BASE[1],):
-                    out[(m, f, n, e)] = cum[:, n] / n
+                    for n in NS if grid else (BASE[1],):
+                        out[(m, f, n, e)] = cum[:, n] / n
     return s, end, out, trades, live, n_selected
 
 
-def run(px: pd.DataFrame, sectors: pd.Series, fr: dict, grid: bool = True):
+def run(px: pd.DataFrame, sectors: pd.Series, fr: dict, grid: bool = True, stop: float | None = None):
     """Run every cohort for every variant (or only BASE if grid=False), in parallel. fr holds the frictions and an
     optional `eligible` mask (stocks allowed into a cohort on its first day). Returns {variant: daily DataFrame of
     FIELDS}, the trades and still-open positions of the BASE variant, and the mean number of pairs found per cohort."""
@@ -249,7 +349,7 @@ def run(px: pd.DataFrame, sectors: pd.Series, fr: dict, grid: bool = True):
     active = np.zeros(n)
     trades, live, n_selected = [], [], {}
     with ProcessPoolExecutor(os.cpu_count(), initializer=_init, initargs=(px, pairs_all, fr)) as ex:
-        for s, end, out, tr, lv, ns in ex.map(partial(_cohort, grid=grid), cohort_starts(px.index), chunksize=4):
+        for s, end, out, tr, lv, ns in ex.map(partial(_cohort, grid=grid, stop=stop), cohort_starts(px.index), chunksize=4):
             active[s:end] += 1
             for k, v in out.items():
                 acc[k][:, s:end] += v

@@ -145,3 +145,57 @@ def test_frictions_charge_tax_on_purchases_and_respect_bans():
     banned = (*fr[:4], np.array([0, 0, 1, 1, 0, 0], bool), np.zeros(n, bool))
     r = strategy.simulate(np.full(n, 10.0), np.full(n, 10.0), z, one, 2.0, True, banned)
     assert r.traded[2] == 0 and r.traded[3] == 0  # cannot short a while it is banned
+
+
+def test_copula_densities_and_conditionals_are_consistent():
+    from pipeline import copula
+
+    g = (np.arange(400) + 0.5) / 400  # midpoint grid on (0, 1)
+    U, V = np.meshgrid(g, g, indexing="ij")
+    for fam, p in [("gaussian", (0.6,)), ("student", (0.6, 5)), ("clayton", (2.0,)), ("gumbel", (2.0,)), ("frank", (5.0,))]:
+        c = np.exp(copula.logpdf(fam, p, U, V))
+        assert abs(c.mean() - 1) < 0.03, fam  # a density integrates to 1
+        # h(u|v) is the integral of the density in u
+        integral = np.cumsum(c, axis=0)[200, 100] / 400
+        assert abs(copula.h(fam, p, g[200] + 0.5 / 400, g[100]) - integral) < 0.02, fam
+
+
+def test_copula_fit_recovers_family_strength():
+    from pipeline import copula
+
+    rng = np.random.default_rng(7)
+    z = rng.multivariate_normal([0, 0], [[1, 0.7], [0.7, 1]], 2000)
+    u, v = (pd.Series(z[:, i]).rank().to_numpy() / 2001 for i in (0, 1))
+    fam, p = copula.fit(u, v)
+    assert fam in ("gaussian", "student", "frank")  # symmetric families; Clayton/Gumbel have one-sided tails
+    if fam != "frank":
+        assert abs(p[0] - 0.7) < 0.08
+
+
+def test_bertram_threshold_widens_with_cost():
+    a0, a1 = strategy.bertram(0.05, 0.01, 0.0), strategy.bertram(0.05, 0.01, 0.01)
+    assert 0 < a0 < a1 and a1 > 0.005  # must at least cover half the round-trip cost on each side
+
+
+def test_exit_at_opposite_threshold_and_stop_loss():
+    z = np.array([0, -3, -1, 0.5, 2.5, 0, 0.0])
+    r = strategy.simulate(np.full(7, 10.0), np.full(7, 10.0), z, np.ones(7), 2.0, True, exit=-2.0)
+    assert r.trades[0]["open"] == 2 and r.trades[0]["close"] == 5  # held through zero until z > +2
+    z = np.array([0, 3, 4.5, 5, 3, 3, 0.0])  # diverges further: stop at 4, and no re-entry at 3
+    r = strategy.simulate(np.full(7, 10.0), np.full(7, 10.0), z, np.ones(7), 2.0, True, stop=4.0)
+    assert len(r.trades) == 1 and r.trades[0]["close"] == 3
+
+
+def test_pca_selects_the_mean_reverting_stock():
+    rng = np.random.default_rng(8)
+    t, n = 253, 12
+    factor = rng.normal(0, 0.01, t)
+    noise = rng.normal(0, 0.01, (t, n)).cumsum(0) * 0.05 + rng.normal(0, 0.004, (t, n))
+    e = np.zeros(t)
+    for i in range(1, t):  # stock 0's residual reverts fast
+        e[i] = 0.6 * e[i - 1] + rng.normal(0, 0.01)
+    r = factor[:, None] + noise
+    r[:, 0] = factor + np.diff(e, prepend=0)
+    lp = pd.DataFrame(np.cumsum(r, axis=0), columns=[f"S{i}" for i in range(n)])
+    sel = strategy.select_pca(lp, 1, 3)
+    assert sel and sel[0]["a"] == "S0"
